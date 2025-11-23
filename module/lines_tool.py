@@ -1,3 +1,5 @@
+from typing import Any
+
 def find_next_pattern_line_number(start: int, pattern: str, lines: list[str], timeout: int):
     """
     從 lines 的 start 行開始找, 找到包含 pattern 的行號, 找不到就丟錯誤，行號都基於
@@ -9,7 +11,7 @@ def find_next_pattern_line_number(start: int, pattern: str, lines: list[str], ti
     :return:
     """
     cnt, limit = 0, timeout
-    _find_log = []
+    _find_log:list[str] = []
     while cnt < limit:
         _find_log.append(lines[start+cnt])
         if pattern in lines[start+cnt]:
@@ -19,14 +21,14 @@ def find_next_pattern_line_number(start: int, pattern: str, lines: list[str], ti
     raise ValueError("沒找到 pattern = `{}`, 從第 {} 行開找, 找了 {} 行找無, log:\n{}".format(pattern, start, limit, _log))
 
 
-def read_log_file_as_lines(file_path):
+def read_log_file_as_lines(file_path: str) -> list[str]:
     with open(file_path, encoding='utf-8') as f:
         lines = [_.rstrip('\n')for _ in f.readlines()]
 
     return lines
 
 
-def simple_parse_single_result(in_res: list) -> dict:
+def simple_parse_single_result(in_res: list[str]) -> dict[str, Any]:
     """
     Analyze the log list of a single test result and extract key information.
 
@@ -49,7 +51,7 @@ def simple_parse_single_result(in_res: list) -> dict:
             - test_log: list[str]
             - pass: str
     """
-    result = {
+    result:dict[str, Any] = {
         'start_time': '',
         'end_time': '',
         'command': '',
