@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>ALE Log Analyzer</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅰️</text></svg>">
+    <script src="{{ url_for('static', filename='chart.min.js') }}"></script>
     <style>
         body { font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px; }
         #dropzone { border: 3px dashed #ccc; padding: 50px; text-align: center; margin: 20px 0; cursor: pointer; transition: all 0.3s; }
@@ -81,44 +82,9 @@
             margin-left: 8px;
             cursor: help;
             font-weight: bold;
-            position: relative;
         }
         .snapshot-help-icon:hover { 
             background: #1976D2;
-        }
-        .snapshot-help-icon .tooltip-text {
-            visibility: hidden;
-            width: 300px;
-            background-color: #333;
-            color: #fff;
-            text-align: left;
-            border-radius: 6px;
-            padding: 10px;
-            position: absolute;
-            z-index: 1000;
-            bottom: 125%;
-            left: 50%;
-            margin-left: -150px;
-            opacity: 0;
-            transition: opacity 0.1s;
-            font-size: 13px;
-            line-height: 1.5;
-            white-space: pre-line;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        .snapshot-help-icon .tooltip-text::after {
-            content: "";
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            margin-left: -5px;
-            border-width: 5px;
-            border-style: solid;
-            border-color: #333 transparent transparent transparent;
-        }
-        .snapshot-help-icon:hover .tooltip-text {
-            visibility: visible;
-            opacity: 1;
         }
         .snapshot-btn {
             position: fixed;
@@ -140,6 +106,30 @@
             background: #7B1FA2;
             transform: scale(1.05);
         }
+        .snapshot-btn .btn-icon {
+            display: none;
+        }
+        
+        /* 當螢幕寬度小於 1082px 時,只顯示圓形圖標 */
+        @media (max-width: 1082px) {
+            .snapshot-btn {
+                width: 50px;
+                height: 50px;
+                padding: 0;
+                border-radius: 50%;
+                font-size: 1.5em;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .snapshot-btn .btn-text,
+            .snapshot-btn .snapshot-help-icon {
+                display: none;
+            }
+            .snapshot-btn .btn-icon {
+                display: block;
+            }
+        }
     </style>
 </head>
 <body>
@@ -155,14 +145,9 @@
     <div id="results"></div>
     
     <button class="snapshot-btn" id="snapshotBtn" onclick="downloadSnapshot()" style="display: none;">
-        💾 儲存頁面快照
-        <span class="snapshot-help-icon">?
-            <span class="tooltip-text">下載當前頁面的完整副本,包含所有統計數據和分析結果。
-
-• 可離線查看,不依賴任何伺服器
-• 保留所有展開/收合狀態
-• 移除上傳和下載功能,僅供閱讀</span>
-        </span>
+        <span class="btn-text">💾 儲存頁面快照</span>
+        <span class="btn-icon">💾</span>
+        <span class="snapshot-help-icon" title="下載當前頁面的完整副本,包含所有統計數據和分析結果。&#10;&#10;• 可離線查看,不依賴任何伺服器&#10;• 保留所有展開/收合狀態&#10;• 移除上傳和下載功能,僅供閱讀">?</span>
     </button>
 
     <script>
@@ -241,20 +226,14 @@
                                     <summary style="cursor: pointer; color: #1976D2; font-weight: bold; font-size: 1.05em;">
                                         📊 所有 Command 執行記錄 (${totalCommands} 個不同的 Command)
                                         <button class="copy-btn" onclick="event.stopPropagation(); downloadCSV('${data.file_id}', this)" style="margin-left: 10px;">下載 CSV</button>
-                                        <span class="snapshot-help-icon">?
-                                            <span class="tooltip-text">顯示所有測試 Command 的執行統計資訊。
-
-• 按平均執行時間降序排列(最慢的在最上面)
-• 點擊每個 Command 可查看詳細執行記錄
-• 包含每次執行的 Group、Round、時間、結果和溫度
-• 可下載 CSV 檔案進行進一步分析</span>
-                                        </span>
+                                        <span class="snapshot-help-icon" title="顯示所有測試 Command 的執行統計資訊。&#10;&#10;• 按平均執行時間降序排列(最慢的在最上面)&#10;• 點擊每個 Command 可查看詳細執行記錄&#10;• 包含每次執行的 Group、Round、時間、結果和溫度&#10;• 可下載 CSV 檔案進行進一步分析">?</span>
                                     </summary>
                                     <div style="margin-top: 12px;">
                                         ${commandsWithAvg.map(({ cmd, executions, avgDuration }) => {
                                             const failCount = executions.filter(e => e.result === 'Fail').length;
                                             const passCount = executions.filter(e => e.result === 'Pass').length;
                                             const exceptionCount = executions.filter(e => e.result === 'Exception').length;
+                                            const validDurations = executions.filter(e => e.duration).map(e => e.duration);
                                             const avgDurationStr = avgDuration > 0 ? `平均 ${avgDuration.toFixed(2)}s` : '無時間資料';
                                             
                                             // 只顯示非零的結果統計
@@ -264,46 +243,88 @@
                                             if (exceptionCount > 0) resultStats.push(`<span style="color: orange;">Exception: ${exceptionCount}</span>`);
                                             const resultStatsStr = resultStats.join(' | ');
                                             
+                                            // 計算標準差
+                                            let stdDev = 0;
+                                            if (validDurations.length > 1) {
+                                                const variance = validDurations.reduce((sum, val) => sum + Math.pow(val - avgDuration, 2), 0) / validDurations.length;
+                                                stdDev = Math.sqrt(variance);
+                                            }
+                                            
+                                            // 使用 IQR 方法檢測異常值
+                                            let outliers = [];
+                                            if (validDurations.length >= 4) {
+                                                const sorted = [...validDurations].sort((a, b) => a - b);
+                                                const q1Index = Math.floor(sorted.length * 0.25);
+                                                const q3Index = Math.floor(sorted.length * 0.75);
+                                                const q1 = sorted[q1Index];
+                                                const q3 = sorted[q3Index];
+                                                const iqr = q3 - q1;
+                                                const lowerBound = q1 - 1.5 * iqr;
+                                                const upperBound = q3 + 1.5 * iqr;
+                                                
+                                                executions.forEach((exec, idx) => {
+                                                    if (exec.duration && (exec.duration < lowerBound || exec.duration > upperBound)) {
+                                                        outliers.push({ round: exec.round, value: exec.duration });
+                                                    }
+                                                });
+                                            }
+                                            
+                                            // 統計資訊字串
+                                            let statsInfo = '';
+                                            if (validDurations.length > 0) {
+                                                statsInfo = ` | σ=${stdDev.toFixed(3)}s`;
+                                                if (outliers.length > 0) {
+                                                    statsInfo += ` | <span style="color: #d32f2f; font-weight: bold;">⚠ ${outliers.length} 個異常值</span>`;
+                                                }
+                                            }
+                                            
+                                            // 生成唯一的 canvas ID
+                                            const chartId = 'chart-' + data.file_id + '-' + Math.random().toString(36).substr(2, 9);
+                                            
+                                            // 建立表格 HTML
+                                            const tableRows = executions.map(exec => {
+                                                const resultColor = exec.result === 'Pass' ? 'green' : (exec.result === 'Fail' ? 'red' : 'orange');
+                                                const durationStr = exec.duration ? exec.duration.toFixed(2) : 'N/A';
+                                                const tempStr = exec.temperature || '-';
+                                                return '<tr>' +
+                                                    '<td style="padding: 6px; border: 1px solid #ccc;">' + exec.group + '</td>' +
+                                                    '<td style="padding: 6px; border: 1px solid #ccc; text-align: center;">' + exec.round + '</td>' +
+                                                    '<td style="padding: 6px; border: 1px solid #ccc;">' + exec.start_time + '</td>' +
+                                                    '<td style="padding: 6px; border: 1px solid #ccc; text-align: right;">' + durationStr + '</td>' +
+                                                    '<td style="padding: 6px; border: 1px solid #ccc; color: ' + resultColor + '; font-weight: bold;">' + exec.result + '</td>' +
+                                                    '<td style="padding: 6px; border: 1px solid #ccc; text-align: right;">' + tempStr + '</td>' +
+                                                    '</tr>';
+                                            }).join('');
+                                            
                                             return `
                                                 <details style="margin-bottom: 10px; background: white; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
                                                     <summary style="cursor: pointer; font-weight: bold;">
                                                         <code style="background: #e8e8e8; padding: 2px 6px; border-radius: 3px;">${cmd}</code>
                                                         <span style="margin-left: 10px; font-size: 0.9em;">
-                                                            <span style="background: #fff3cd; padding: 2px 6px; border-radius: 3px; color: #856404;">${avgDurationStr}</span> |
+                                                            <span style="background: #fff3cd; padding: 2px 6px; border-radius: 3px; color: #856404;">${avgDurationStr}</span>${statsInfo} |
                                                             執行 ${executions.length} 次 - 
                                                             ${resultStatsStr}
                                                         </span>
                                                     </summary>
-                                                    <div style="margin-top: 8px; max-height: 300px; overflow-y: auto;">
-                                                        <table style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
-                                                            <thead>
-                                                                <tr style="background: #e0e0e0;">
-                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Group</th>
-                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Round</th>
-                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Start Time</th>
-                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Duration (s)</th>
-                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Result</th>
-                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Temp (°C)</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                ${executions.map(exec => {
-                                                                    const resultColor = exec.result === 'Pass' ? 'green' : (exec.result === 'Fail' ? 'red' : 'orange');
-                                                                    const durationStr = exec.duration ? exec.duration.toFixed(2) : 'N/A';
-                                                                    const tempStr = exec.temperature || '-';
-                                                                    return `
-                                                                        <tr>
-                                                                            <td style="padding: 6px; border: 1px solid #ccc;">${exec.group}</td>
-                                                                            <td style="padding: 6px; border: 1px solid #ccc; text-align: center;">${exec.round}</td>
-                                                                            <td style="padding: 6px; border: 1px solid #ccc;">${exec.start_time}</td>
-                                                                            <td style="padding: 6px; border: 1px solid #ccc; text-align: right;">${durationStr}</td>
-                                                                            <td style="padding: 6px; border: 1px solid #ccc; color: ${resultColor}; font-weight: bold;">${exec.result}</td>
-                                                                            <td style="padding: 6px; border: 1px solid #ccc; text-align: right;">${tempStr}</td>
-                                                                        </tr>
-                                                                    `;
-                                                                }).join('')}
-                                                            </tbody>
-                                                        </table>
+                                                    <div style="margin-top: 8px;">
+                                                        <div style="background: #f9f9f9; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                                                            <canvas id="${chartId}" style="max-height: 200px;"></canvas>
+                                                        </div>
+                                                        <div style="max-height: 300px; overflow-y: auto;">
+                                                            <table style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
+                                                                <thead>
+                                                                    <tr style="background: #e0e0e0;">
+                                                                        <th style="padding: 6px; border: 1px solid #ccc;">Group</th>
+                                                                        <th style="padding: 6px; border: 1px solid #ccc;">Round</th>
+                                                                        <th style="padding: 6px; border: 1px solid #ccc;">Start Time</th>
+                                                                        <th style="padding: 6px; border: 1px solid #ccc;">Duration (s)</th>
+                                                                        <th style="padding: 6px; border: 1px solid #ccc;">Result</th>
+                                                                        <th style="padding: 6px; border: 1px solid #ccc;">Temp (°C)</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>${tableRows}</tbody>
+                                                            </table>
+                                                        </div>
                                                     </div>
                                                 </details>
                                             `;
@@ -359,9 +380,14 @@
                                 ${commandExecutionsHtml}
                                 ${failedHtml}
                                 <div class="button-group" style="margin-top: 15px; position: relative;">
-                                    <button class="download-btn" onclick="download('${data.file_id}')" title="下載原始 log 檔案">
-                                        ${data.download_name}
-                                    </button>
+                                    <div style="display: inline-flex; gap: 5px; margin-right: 10px;">
+                                        <button class="download-btn" onclick="viewRaw('${data.file_id}')" title="在新分頁查看原始 log 內容">
+                                            Raw
+                                        </button>
+                                        <button class="download-btn" onclick="download('${data.file_id}')" title="下載原始 log 檔案">
+                                            下載 Raw
+                                        </button>
+                                    </div>
                                     ${data.has_fail_report ? 
                                         `<button class="download-btn" style="background: #ff5722;" onclick="downloadFailReport('${data.file_id}')" title="統整 log 中的所有 fail 區塊">
                                             下載 Fail Report
@@ -373,6 +399,127 @@
                             </div>
                         `;
                         results.insertBefore(div, results.firstChild);
+                        
+                        // 為每個 command 創建圖表
+                        if (data.command_executions && Object.keys(data.command_executions).length > 0) {
+                            // 延遲執行以確保 DOM 已經渲染
+                            setTimeout(() => {
+                                const commandsWithAvg = Object.entries(data.command_executions).map(([cmd, executions]) => {
+                                    const validDurations = executions.filter(e => e.duration).map(e => e.duration);
+                                    const avgDuration = validDurations.length > 0 
+                                        ? validDurations.reduce((a, b) => a + b, 0) / validDurations.length 
+                                        : 0;
+                                    return { cmd, executions, avgDuration };
+                                });
+                                
+                                commandsWithAvg.sort((a, b) => b.avgDuration - a.avgDuration);
+                                
+                                const canvases = div.querySelectorAll('canvas');
+                                canvases.forEach((canvas, idx) => {
+                                    if (canvas && !canvas.chart && idx < commandsWithAvg.length) {
+                                        const { executions } = commandsWithAvg[idx];
+                                        const ctx = canvas.getContext('2d');
+                                        
+                                        const labels = executions.map(e => 'R' + e.round);
+                                        const durations = executions.map(e => e.duration || 0);
+                                        const failPoints = executions.map(e => e.result === 'Fail' ? (e.duration || 0) : null);
+                                        
+                                        // 計算平均值和標準差用於圖表顯示
+                                        const validDurations = durations.filter(d => d > 0);
+                                        const mean = validDurations.reduce((a, b) => a + b, 0) / validDurations.length;
+                                        let stdDev = 0;
+                                        if (validDurations.length > 1) {
+                                            const variance = validDurations.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / validDurations.length;
+                                            stdDev = Math.sqrt(variance);
+                                        }
+                                        
+                                        // 檢測異常值
+                                        const outlierPoints = [];
+                                        if (validDurations.length >= 4) {
+                                            const sorted = [...validDurations].sort((a, b) => a - b);
+                                            const q1 = sorted[Math.floor(sorted.length * 0.25)];
+                                            const q3 = sorted[Math.floor(sorted.length * 0.75)];
+                                            const iqr = q3 - q1;
+                                            const lowerBound = q1 - 1.5 * iqr;
+                                            const upperBound = q3 + 1.5 * iqr;
+                                            
+                                            durations.forEach((d, i) => {
+                                                if (d > 0 && (d < lowerBound || d > upperBound)) {
+                                                    outlierPoints.push(d);
+                                                } else {
+                                                    outlierPoints.push(null);
+                                                }
+                                            });
+                                        }
+                                        
+                                        canvas.chart = new Chart(ctx, {
+                                            type: 'line',
+                                            data: {
+                                                labels: labels,
+                                                datasets: [{
+                                                    label: '執行時間',
+                                                    data: durations,
+                                                    borderColor: '#2196F3',
+                                                    backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                                                    tension: 0.3,
+                                                    pointRadius: 4
+                                                }, {
+                                                    label: '平均值',
+                                                    data: Array(durations.length).fill(mean),
+                                                    borderColor: '#4CAF50',
+                                                    borderWidth: 2,
+                                                    borderDash: [5, 5],
+                                                    pointRadius: 0,
+                                                    fill: false
+                                                }, {
+                                                    label: '±1σ 上界',
+                                                    data: Array(durations.length).fill(mean + stdDev),
+                                                    borderColor: '#FFC107',
+                                                    borderWidth: 1,
+                                                    borderDash: [2, 2],
+                                                    pointRadius: 0,
+                                                    fill: false
+                                                }, {
+                                                    label: '±1σ 下界',
+                                                    data: Array(durations.length).fill(mean - stdDev),
+                                                    borderColor: '#FFC107',
+                                                    borderWidth: 1,
+                                                    borderDash: [2, 2],
+                                                    pointRadius: 0,
+                                                    fill: false
+                                                }, {
+                                                    label: '異常值 (IQR)',
+                                                    data: outlierPoints,
+                                                    backgroundColor: '#FF9800',
+                                                    pointRadius: 10,
+                                                    pointStyle: 'triangle',
+                                                    showLine: false
+                                                }, {
+                                                    label: 'Fail',
+                                                    data: failPoints,
+                                                    backgroundColor: '#f44336',
+                                                    pointRadius: 8,
+                                                    showLine: false
+                                                }]
+                                            },
+                                            options: {
+                                                responsive: true,
+                                                maintainAspectRatio: true,
+                                                aspectRatio: 2.5,
+                                                plugins: {
+                                                    legend: { display: true, position: 'top', labels: { boxWidth: 15, padding: 10, font: { size: 11 } } }
+                                                },
+                                                scales: {
+                                                    y: { beginAtZero: true, ticks: { font: { size: 10 } }, title: { display: true, text: '秒', font: { size: 11 } } },
+                                                    x: { ticks: { font: { size: 10 } }, title: { display: true, text: 'Round', font: { size: 11 } } }
+                                                }
+                                            }
+                                        });
+                                    }
+                                });
+                            }, 100);
+                        }
+                        
                         updateSnapshotButton(); // 更新快照按鈕顯示狀態
                     } else {
                         alert('上傳失敗: ' + data.error);
@@ -413,6 +560,10 @@
             document.querySelectorAll('.toggle-icon').forEach(icon => {
                 icon.classList.add('collapsed');
             });
+        }
+
+        function viewRaw(fileId) {
+            window.open('/raw/' + fileId, '_blank');
         }
 
         function download(fileId) {
@@ -479,10 +630,92 @@
         }
         
         function downloadSnapshot() {
-            // 複製當前頁面的 HTML（使用 true 進行深度複製）
-            const htmlContent = document.documentElement.cloneNode(true);
-            
-            // 移除上傳區域和控制面板（這些是模板中的靜態元素）
+            // 使用 async IIFE (立即執行的 async 函數)
+            (async () => {
+                // 複製當前頁面的 HTML（使用 true 進行深度複製）
+                const htmlContent = document.documentElement.cloneNode(true);
+                
+                // 處理 Chart.js script - 從 server 讀取並嵌入
+                const chartScript = htmlContent.querySelector('head script[src*="chart"]');
+                let chartJsLoaded = false;
+                
+                if (chartScript) {
+                    try {
+                        // 從 server 讀取 Chart.js 內容
+                        const response = await fetch(chartScript.src);
+                        const chartJsContent = await response.text();
+                        
+                        // 在 htmlContent 的上下文中創建 script
+                        // 方法1: 直接修改 textContent (最簡單)
+                        chartScript.removeAttribute('src'); // 移除 src 屬性
+                        chartScript.textContent = chartJsContent; // 設定為 inline script
+                        chartScript.dataset.keepScript = 'true'; // 標記為需要保留的 script
+                        
+                        chartJsLoaded = true;
+                    } catch (err) {
+                        console.warn('無法載入 Chart.js，快照將只包含靜態圖表圖片', err);
+                        chartScript.remove();
+                    }
+                }
+                
+                // 只有在 Chart.js 載入失敗時，才將 canvas 轉換為圖片
+                if (!chartJsLoaded) {
+                    const canvases = document.querySelectorAll('canvas');
+                    const clonedCanvases = htmlContent.querySelectorAll('canvas');
+                    canvases.forEach((canvas, idx) => {
+                        if (canvas.chart && clonedCanvases[idx]) {
+                            const img = document.createElement('img');
+                            img.src = canvas.toDataURL('image/png');
+                            img.style.width = '100%';
+                            img.style.maxHeight = '200px';
+                            clonedCanvases[idx].parentNode.replaceChild(img, clonedCanvases[idx]);
+                        }
+                    });
+                } else {
+                    // Chart.js 載入成功時，收集所有圖表配置並注入到快照中
+                    const canvases = document.querySelectorAll('canvas');
+                    const chartConfigs = {};
+                    
+                    canvases.forEach((canvas) => {
+                        if (canvas.chart && canvas.id) {
+                            // 儲存圖表配置
+                            chartConfigs[canvas.id] = {
+                                labels: canvas.chart.data.labels,
+                                datasets: canvas.chart.data.datasets,
+                                options: {
+                                    responsive: true,
+                                    maintainAspectRatio: true,
+                                    aspectRatio: 2.5,
+                                    plugins: {
+                                        legend: { display: true, position: 'top', labels: { boxWidth: 15, padding: 10, font: { size: 11 } } }
+                                    },
+                                    scales: {
+                                        y: { beginAtZero: true, ticks: { font: { size: 10 } }, title: { display: true, text: '秒', font: { size: 11 } } },
+                                        x: { ticks: { font: { size: 10 } }, title: { display: true, text: 'Round', font: { size: 11 } } }
+                                    }
+                                }
+                            };
+                        }
+                    });
+                    
+                    // 在 head 中注入圖表配置
+                    const configScript = document.createElement('script');
+                    configScript.textContent = `window.chartConfigs = ${JSON.stringify(chartConfigs)};`;
+                    configScript.dataset.keepScript = 'true';
+                    const head = htmlContent.querySelector('head');
+                    if (head) {
+                        head.appendChild(configScript);
+                    }
+                    
+                    // 移除所有 base64 圖片
+                    const base64Images = htmlContent.querySelectorAll('img[src^="data:image"]');
+                    base64Images.forEach(img => {
+                        console.log('移除 base64 圖片:', img.src.substring(0, 50));
+                        img.remove();
+                    });
+                }
+                
+                // 移除上傳區域和控制面板（這些是模板中的靜態元素）
             const dropzone = htmlContent.querySelector('#dropzone');
             const fileInput = htmlContent.querySelector('#fileInput');
             const controlPanel = htmlContent.querySelector('.control-panel');
@@ -501,6 +734,11 @@
             // 移除上傳相關的事件處理器，但保留 toggleContent
             const scripts = htmlContent.querySelectorAll('script');
             scripts.forEach(script => {
+                // 保留標記為 keepScript 的 script (例如 Chart.js)
+                if (script.dataset.keepScript === 'true') {
+                    return; // 跳過,不處理
+                }
+                
                 const scriptText = script.textContent;
                 // 只保留必要的 toggleContent 函數和相關功能
                 if (scriptText.includes('uploadFile') || scriptText.includes('downloadCSV') || 
@@ -508,6 +746,7 @@
                     scriptText.includes('clearFile') || scriptText.includes('copyLog') ||
                     scriptText.includes('updateSnapshotButton') || scriptText.includes('downloadSnapshot')) {
                     // 移除不需要的函數，但保留 toggleContent, expandAll, collapseAll
+                    // 並添加圖表初始化邏輯
                     const essentialScript = `
                         function toggleContent(fileId) {
                             const content = document.getElementById('content-' + fileId);
@@ -543,6 +782,43 @@
                                 icon.classList.add('collapsed');
                             });
                         }
+                        
+                        // 初始化所有圖表
+                        window.addEventListener('DOMContentLoaded', function() {
+                            // 檢查是否有預先儲存的圖表配置
+                            if (!window.chartConfigs) {
+                                console.warn('沒有找到圖表配置，快照可能無法顯示圖表');
+                                return;
+                            }
+                            
+                            const canvases = document.querySelectorAll('canvas');
+                            canvases.forEach(canvas => {
+                                if (canvas.chart) return; // 已經初始化過
+                                
+                                const canvasId = canvas.id;
+                                const config = window.chartConfigs[canvasId];
+                                
+                                if (!config) {
+                                    console.warn('找不到 canvas', canvasId, '的圖表配置');
+                                    return;
+                                }
+                                
+                                try {
+                                    const ctx = canvas.getContext('2d');
+                                    canvas.chart = new Chart(ctx, {
+                                        type: 'line',
+                                        data: {
+                                            labels: config.labels,
+                                            datasets: config.datasets
+                                        },
+                                        options: config.options
+                                    });
+                                    console.log('成功初始化圖表:', canvasId);
+                                } catch (err) {
+                                    console.error('圖表初始化失敗:', canvasId, err);
+                                }
+                            });
+                        });
                     `;
                     script.textContent = essentialScript;
                 } else {
@@ -597,6 +873,7 @@
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
+            })(); // 結束 async IIFE
         }
     </script>
 </body>

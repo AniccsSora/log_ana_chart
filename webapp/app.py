@@ -226,6 +226,16 @@ def download(file_id):
     return send_file(file_info['path'], as_attachment=True, download_name=file_info['original_name'])
 
 
+@app.route('/raw/<file_id>')
+def view_raw(file_id):
+    """在瀏覽器中直接顯示原始 log 內容"""
+    if file_id not in processed_files:
+        return "檔案不存在", 404
+    
+    file_info = processed_files[file_id]
+    return send_file(file_info['path'], mimetype='text/plain; charset=utf-8')
+
+
 @app.route('/download_fail_report/<file_id>')
 def download_fail_report(file_id):
     """下載 fail report"""
