@@ -81,9 +81,44 @@
             margin-left: 8px;
             cursor: help;
             font-weight: bold;
+            position: relative;
         }
         .snapshot-help-icon:hover { 
             background: #1976D2;
+        }
+        .snapshot-help-icon .tooltip-text {
+            visibility: hidden;
+            width: 300px;
+            background-color: #333;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 1000;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -150px;
+            opacity: 0;
+            transition: opacity 0.1s;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-line;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .snapshot-help-icon .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+        .snapshot-help-icon:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
         }
         .snapshot-btn {
             position: fixed;
@@ -121,7 +156,13 @@
     
     <button class="snapshot-btn" id="snapshotBtn" onclick="downloadSnapshot()" style="display: none;">
         💾 儲存頁面快照
-        <span class="snapshot-help-icon" title="下載當前頁面的完整副本，包含所有統計數據和分析結果。&#10;&#10;• 可離線查看，不依賴任何伺服器&#10;• 保留所有展開/收合狀態&#10;• 移除上傳和下載功能，僅供閱讀&#10;• 適合長期保存或分享分析結果">?</span>
+        <span class="snapshot-help-icon">?
+            <span class="tooltip-text">下載當前頁面的完整副本,包含所有統計數據和分析結果。
+
+• 可離線查看,不依賴任何伺服器
+• 保留所有展開/收合狀態
+• 移除上傳和下載功能,僅供閱讀</span>
+        </span>
     </button>
 
     <script>
@@ -200,7 +241,14 @@
                                     <summary style="cursor: pointer; color: #1976D2; font-weight: bold; font-size: 1.05em;">
                                         📊 所有 Command 執行記錄 (${totalCommands} 個不同的 Command)
                                         <button class="copy-btn" onclick="event.stopPropagation(); downloadCSV('${data.file_id}', this)" style="margin-left: 10px;">下載 CSV</button>
-                                        <span class="help-icon" title="顯示所有測試 Command 的執行統計資訊。&#10;&#10;• 按平均執行時間降序排列（最慢的在最上面）&#10;• 點擊每個 Command 可查看詳細執行記錄&#10;• 包含每次執行的 Group、Round、時間、結果和溫度&#10;• 可下載 CSV 檔案進行進一步分析">?</span>
+                                        <span class="snapshot-help-icon">?
+                                            <span class="tooltip-text">顯示所有測試 Command 的執行統計資訊。
+
+• 按平均執行時間降序排列(最慢的在最上面)
+• 點擊每個 Command 可查看詳細執行記錄
+• 包含每次執行的 Group、Round、時間、結果和溫度
+• 可下載 CSV 檔案進行進一步分析</span>
+                                        </span>
                                     </summary>
                                     <div style="margin-top: 12px;">
                                         ${commandsWithAvg.map(({ cmd, executions, avgDuration }) => {
@@ -533,7 +581,18 @@
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'ale_log_report_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5) + '.html';
+            
+            // 格式化時間為 YYYY-MM-DD_HH-MM-SS
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const timestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+            
+            a.download = `ale_log_report_${timestamp}.html`;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);

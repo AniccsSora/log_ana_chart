@@ -84,6 +84,9 @@ def upload():
     file_id = f"{int(datetime.now().timestamp() * 1000)}_{file.filename}"
     save_path = os.path.join(app.config['UPLOAD_FOLDER'], file_id)
     
+    # 確保目錄存在
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
     with open(save_path, 'w', encoding='utf-8') as f:
         f.write(content)
     
