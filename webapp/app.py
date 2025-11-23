@@ -9,7 +9,23 @@ app = Flask(__name__)
 # 根據今天日期建立上傳資料夾
 today_folder = datetime.now().strftime('%m_%d_%Y')
 app.config['UPLOAD_FOLDER'] = os.path.join('uploads', today_folder)
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# 建立上傳目錄 (加入錯誤處理)
+try:
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    # 設定目錄權限為 775 (Linux 環境)
+    if os.name != 'nt':  # 非 Windows 系統
+        os.chmod(app.config['UPLOAD_FOLDER'], 0o775)
+        # 也確保父目錄有正確權限
+        parent_dir = os.path.dirname(app.config['UPLOAD_FOLDER'])
+        if os.path.exists(parent_dir):
+            os.chmod(parent_dir, 0o775)
+except PermissionError as e:
+    print(f"⚠️ 警告: 無法建立上傳目錄 {app.config['UPLOAD_FOLDER']}")
+    print(f"   錯誤: {e}")
+    print(f"   請執行: sudo chown -R $USER:www-data uploads && sudo chmod -R 775 uploads")
+except Exception as e:
+    print(f"⚠️ 建立上傳目錄時發生錯誤: {e}")
 
 # 儲存已處理的檔案資訊
 processed_files = {}
@@ -84,17 +100,35 @@ def upload():
     file_id = f"{int(datetime.now().timestamp() * 1000)}_{file.filename}"
     save_path = os.path.join(app.config['UPLOAD_FOLDER'], file_id)
     
-    # 確保目錄存在
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    # 確保目錄存在並處理權限錯誤
+    try:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    except PermissionError:
+        return jsonify({'success': False, 'error': '伺服器權限不足,無法建立上傳目錄'})
     
-    with open(save_path, 'w', encoding='utf-8') as f:
-        f.write(content)
+    # 寫入檔案並處理權限錯誤
+    try:
+        with open(save_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        # Linux 環境下設定檔案權限
+        if os.name != 'nt':
+            os.chmod(save_path, 0o664)  # rw-rw-r--
+    except PermissionError:
+        return jsonify({'success': False, 'error': '伺服器權限不足,無法儲存檔案'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'儲存檔案時發生錯誤: {str(e)}'})
     
     # 如果有 fail 項目，生成 fail report
     fail_report_path = None
     if parse_result['failed_count'] > 0:
         fail_report_path = save_path.replace('.log', '_fail_report.txt')
-        _generate_fail_report(parse_result['failed_sessions'], fail_report_path)
+        try:
+            _generate_fail_report(parse_result['failed_sessions'], fail_report_path)
+            if os.name != 'nt':
+                os.chmod(fail_report_path, 0o664)
+        except Exception as e:
+            print(f"警告: 無法生成 fail report: {e}")
     
     # 生成下載按鈕名稱
     download_name = f"下載 {file.filename}"
@@ -279,8 +313,17 @@ def download_csv(file_id):
     
     # 儲存 CSV 檔案
     csv_path = file_info['path'].replace('.log', '_time_stat.csv')
-    with open(csv_path, 'w', encoding='utf-8-sig') as f:  # 使用 utf-8-sig 以支援 Excel
-        f.write(csv_content)
+    try:
+        with open(csv_path, 'w', encoding='utf-8-sig') as f:  # 使用 utf-8-sig 以支援 Excel
+            f.write(csv_content)
+        
+        # Linux 環境下設定檔案權限
+        if os.name != 'nt':
+            os.chmod(csv_path, 0o664)
+    except PermissionError:
+        return jsonify({'success': False, 'error': '伺服器權限不足,無法生成 CSV 檔案'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'生成 CSV 時發生錯誤: {str(e)}'})
     
     # 直接使用原始檔名，只替換副檔名
     original_name = file_info['original_name']
