@@ -30,8 +30,9 @@
         pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
         .button-group { margin-top: 10px; }
         .control-panel { margin: 20px 0; text-align: center; }
-        .control-btn { background: #2196F3; color: white; padding: 10px 20px; border: none; cursor: pointer; margin: 0 5px; border-radius: 4px; }
-        .control-btn:hover { background: #0b7dda; }
+        .control-btn { background: #2196F3; color: white; padding: 10px 20px; border: none; cursor: pointer; margin: 0 5px; border-radius: 4px; transition: all 0.3s; }
+        .control-btn:hover { background: #0b7dda; transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        .control-btn:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
         .file-content { overflow: hidden; transition: max-height 0.3s ease; }
         .file-content.collapsed { max-height: 0; }
         .file-content.expanded { max-height: 5000px; }
@@ -86,6 +87,61 @@
         .snapshot-help-icon:hover { 
             background: #1976D2;
         }
+        .zoom-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(33, 150, 243, 0.8);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.85em;
+            z-index: 5;
+            transition: all 0.3s;
+        }
+        .zoom-btn:hover {
+            background: rgba(33, 150, 243, 1);
+            transform: scale(1.05);
+        }
+        .chart-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+        .chart-modal-content {
+            position: relative;
+            background-color: white;
+            margin: 2% auto;
+            padding: 20px;
+            width: 90%;
+            max-width: 1400px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .chart-modal-close {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            color: #666;
+            font-size: 35px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 1001;
+        }
+        .chart-modal-close:hover {
+            color: #f44336;
+        }
+        .chart-modal-canvas {
+            width: 100% !important;
+            height: 600px !important;
+        }
         .snapshot-btn {
             position: fixed;
             bottom: 30px;
@@ -133,6 +189,15 @@
     </style>
 </head>
 <body>
+    <!-- 圖表放大彈出視窗 -->
+    <div id="chartModal" class="chart-modal">
+        <div class="chart-modal-content">
+            <span class="chart-modal-close" onclick="closeChartModal()">&times;</span>
+            <h3 id="modalChartTitle" style="color: #1976D2; margin-bottom: 15px;"></h3>
+            <canvas id="modalChart" class="chart-modal-canvas"></canvas>
+        </div>
+    </div>
+    
     <h1>拖曳檔案上傳</h1>
     <input type="file" id="fileInput" multiple style="display: none;">
     <div id="dropzone">拖曳檔案到此處或點擊選擇 (支援多檔案)</div>
@@ -229,15 +294,24 @@
                                         <span class="snapshot-help-icon" title="顯示所有測試 Command 的執行統計資訊。&#10;&#10;• 按平均執行時間降序排列(最慢的在最上面)&#10;• 點擊每個 Command 可查看詳細執行記錄&#10;• 包含每次執行的 Group、Round、時間、結果和溫度&#10;• 可下載 CSV 檔案進行進一步分析">?</span>
                                     </summary>
                                     <div style="margin-top: 12px; max-height: 600px; overflow-y: auto;">
+                                        <!-- ==================== 維護區 1: 控制按鈕UI ==================== -->
+                                        <!-- 位置: Command 執行記錄內的控制面板 -->
+                                        <!-- 可修改: 按鈕文字、顏色(background)、順序、間距(margin) -->
                                         <div style="margin-bottom: 10px; padding: 8px; background: #fff; border-radius: 4px; border: 1px solid #ddd; position: sticky; top: 0; z-index: 10;">
                                             <strong style="color: #1976D2;">📈 統計圖表說明</strong>
-                                            <span class="help-icon" style="cursor: pointer;" title="圖表統計方法說明：&#10;&#10;🟦 藍色折線：實際執行時間&#10;🟩 綠色虛線：平均值 (Mean)&#10;🟨 黃色虛線：±1σ 標準差範圍 (約68%數據落在此區間)&#10;🟧 橘色三角：異常值 (使用IQR四分位距方法檢測)&#10;🟥 紅色圓點：測試失敗&#10;&#10;標準差 (σ)：數值越小表示執行時間越穩定&#10;IQR 異常值檢測：Q1-1.5×IQR 到 Q3+1.5×IQR 範圍外視為異常&#10;&#10;可評估：&#10;• 識別性能不穩定的測試&#10;• 發現執行時間異常的 Round&#10;• 評估測試可靠性">?</span>
+                                            <span class="help-icon" style="cursor: pointer;" title="圖表統計方法說明：&#10;&#10;🟦 藍色折線：實際執行時間&#10;🟩 綠色虛線：平均值 (Mean)&#10;🟨 黃色虛線：±1σ 標準差範圍 (約68%數據落在此區間)&#10;🟧 橘色三角：異常值 (使用IQR四分位距方法檢測)&#10;🟥 紅色圓點：測試失敗&#10;&#10;標準差 (σ)：數值越小表示執行時間越穩定&#10;IQR 異常值檢測：Q1-1.5×IQR 到 Q3+1.5×IQR 範圍外視為異常&#10;&#10;• 識別性能不穩定的測試&#10;• 發現執行時間異常的 Round">?</span>
+                                            <!-- 語言切換按鈕: 藍灰色(#607D8B) 低調不顯眼 -->
+                                            <button class="control-btn" onclick="event.stopPropagation(); toggleChartLanguage('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #607D8B; margin: 0 8px;">🌐 中/EN</button>
                                             <span style="margin-left: 15px;">
+                                                <!-- 展開異常值按鈕: 橘色(#FF9800) 對應圖表異常值顏色 -->
                                                 <button class="control-btn" onclick="expandOutliers('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #FF9800; margin: 0 3px;">展開異常值</button>
+                                                <!-- 展開失敗項按鈕: 紅色(#f44336) 對應圖表失敗點顏色 -->
                                                 <button class="control-btn" onclick="expandFails('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #f44336; margin: 0 3px;">展開失敗項</button>
+                                                <!-- 全部收合按鈕: 灰色(#757575) -->
                                                 <button class="control-btn" onclick="collapseAllCharts('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #757575; margin: 0 3px;">全部收合</button>
                                             </span>
                                         </div>
+                                        <!-- ==================== 維護區 1 結束 ==================== -->
                                         ${commandsWithAvg.map(({ cmd, executions, avgDuration }) => {
                                             const failCount = executions.filter(e => e.result === 'Fail').length;
                                             const passCount = executions.filter(e => e.result === 'Pass').length;
@@ -316,7 +390,8 @@
                                                         </span>
                                                     </summary>
                                                     <div style="margin-top: 8px;">
-                                                        <div style="background: #f9f9f9; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                                                        <div style="background: #f9f9f9; padding: 10px; border-radius: 4px; margin-bottom: 10px; position: relative;">
+                                                            <button class="zoom-btn" onclick="event.stopPropagation(); zoomChart('${chartId}')">🔍 放大</button>
                                                             <canvas id="${chartId}" style="max-height: 200px;"></canvas>
                                                         </div>
                                                         <div style="max-height: 300px; overflow-y: auto;">
@@ -461,52 +536,61 @@
                                             });
                                         }
                                         
+                                        // ==================== 維護區 2: Chart.js 圖表配置 ====================
+                                        // 位置: 每個 Command 的圖表初始化
+                                        // 可修改: 顏色、線條樣式、標籤文字、圖表大小
                                         canvas.chart = new Chart(ctx, {
                                             type: 'line',
                                             data: {
                                                 labels: labels,
                                                 datasets: [{
+                                                    // Dataset 0: 執行時間 - 藍色折線
                                                     label: '執行時間',
                                                     data: durations,
-                                                    borderColor: '#2196F3',
+                                                    borderColor: '#2196F3',  // 藍色
                                                     backgroundColor: 'rgba(33, 150, 243, 0.1)',
                                                     tension: 0.3,
                                                     pointRadius: 4
                                                 }, {
+                                                    // Dataset 1: 平均值 - 綠色虛線
                                                     label: '平均值',
                                                     data: Array(durations.length).fill(mean),
-                                                    borderColor: '#4CAF50',
+                                                    borderColor: '#4CAF50',  // 綠色
                                                     borderWidth: 2,
                                                     borderDash: [5, 5],
                                                     pointRadius: 0,
                                                     fill: false
                                                 }, {
+                                                    // Dataset 2: ±1σ 上界 - 黃色虛線
                                                     label: '±1σ 上界',
                                                     data: Array(durations.length).fill(mean + stdDev),
-                                                    borderColor: '#FFC107',
+                                                    borderColor: '#FFC107',  // 黃色
                                                     borderWidth: 1,
                                                     borderDash: [2, 2],
                                                     pointRadius: 0,
                                                     fill: false
                                                 }, {
+                                                    // Dataset 3: ±1σ 下界 - 黃色虛線
                                                     label: '±1σ 下界',
                                                     data: Array(durations.length).fill(mean - stdDev),
-                                                    borderColor: '#FFC107',
+                                                    borderColor: '#FFC107',  // 黃色
                                                     borderWidth: 1,
                                                     borderDash: [2, 2],
                                                     pointRadius: 0,
                                                     fill: false
                                                 }, {
+                                                    // Dataset 4: 異常值 - 橘色三角形
                                                     label: '異常值 (IQR)',
                                                     data: outlierPoints,
-                                                    backgroundColor: '#FF9800',
+                                                    backgroundColor: '#FF9800',  // 橘色
                                                     pointRadius: 10,
                                                     pointStyle: 'triangle',
                                                     showLine: false
                                                 }, {
+                                                    // Dataset 5: 失敗點 - 紅色圓點
                                                     label: 'Fail',
                                                     data: failPoints,
-                                                    backgroundColor: '#f44336',
+                                                    backgroundColor: '#f44336',  // 紅色
                                                     pointRadius: 8,
                                                     showLine: false
                                                 }]
@@ -514,7 +598,7 @@
                                             options: {
                                                 responsive: true,
                                                 maintainAspectRatio: true,
-                                                aspectRatio: 2.5,
+                                                aspectRatio: 2.5,  // 圖表寬高比
                                                 plugins: {
                                                     legend: { display: true, position: 'top', labels: { boxWidth: 15, padding: 10, font: { size: 11 } } }
                                                 },
@@ -524,6 +608,7 @@
                                                 }
                                             }
                                         });
+                                        // ==================== 維護區 2 結束 ====================
                                     }
                                 });
                             }, 100);
@@ -594,6 +679,163 @@
                 item.open = false;
             });
         }
+        
+        // ==================== 維護區 3: 圖表語言切換函數 ====================
+        // 功能: 切換所有圖表的中英文標籤
+        // 可修改: labels 物件內的中英文文字
+        function toggleChartLanguage(fileId) {
+            // 使用更廣泛的選擇器,找到所有該檔案的圖表
+            const fileDiv = document.getElementById('file-' + fileId);
+            if (!fileDiv) {
+                console.error('找不到檔案容器:', 'file-' + fileId);
+                return;
+            }
+            
+            const canvases = fileDiv.querySelectorAll('canvas');
+            console.log('找到', canvases.length, '個圖表');
+            
+            let updatedCount = 0;
+            canvases.forEach(canvas => {
+                if (canvas.chart) {
+                    const chart = canvas.chart;
+                    const currentLang = chart.options.chartLanguage || 'zh';
+                    const newLang = currentLang === 'zh' ? 'en' : 'zh';
+                    //console.log('切換語言:', currentLang, '->', newLang);
+                    
+                    // ===== 語言定義區 (可修改中英文對照) =====
+                    const labels = {
+                        zh: {
+                            execution: '執行時間',      // Dataset 0
+                            mean: '平均值',              // Dataset 1
+                            upper: '±1σ 上界',          // Dataset 2
+                            lower: '±1σ 下界',          // Dataset 3
+                            outlier: '異常值 (IQR)',    // Dataset 4
+                            fail: 'Fail',               // Dataset 5
+                            yAxis: '秒',                // Y軸標題
+                            xAxis: 'Round'              // X軸標題
+                        },
+                        en: {
+                            execution: 'Execution Time', // Dataset 0
+                            mean: 'Mean',                // Dataset 1
+                            upper: '±1σ Upper',          // Dataset 2
+                            lower: '±1σ Lower',          // Dataset 3
+                            outlier: 'Outlier (IQR)',    // Dataset 4
+                            fail: 'Fail',                // Dataset 5
+                            yAxis: 'Seconds',            // Y軸標題
+                            xAxis: 'Round'               // X軸標題
+                        }
+                    };
+                    // ===== 語言定義區結束 =====
+                    
+                    const lang = labels[newLang];
+                    
+                    // 更新數據集標籤 (對應 datasets[0-5])
+                    chart.data.datasets[0].label = lang.execution;
+                    chart.data.datasets[1].label = lang.mean;
+                    chart.data.datasets[2].label = lang.upper;
+                    chart.data.datasets[3].label = lang.lower;
+                    chart.data.datasets[4].label = lang.outlier;
+                    chart.data.datasets[5].label = lang.fail;
+                    
+                    // 更新座標軸標題
+                    chart.options.scales.y.title.text = lang.yAxis;
+                    chart.options.scales.x.title.text = lang.xAxis;
+                    
+                    // 儲存當前語言
+                    chart.options.chartLanguage = newLang;
+                    
+                    // 更新圖表
+                    chart.update();
+                    updatedCount++;
+                }
+            });
+            
+            if (updatedCount > 0) {
+                //console.log('成功切換', updatedCount, '個圖表語言');
+            } else {
+                console.warn('沒有找到任何圖表可切換');
+            }
+        }
+        // ==================== 維護區 3 結束 ====================
+        
+        // 圖表放大功能
+        let modalChartInstance = null;
+        
+        function zoomChart(canvasId) {
+            const originalCanvas = document.getElementById(canvasId);
+            if (!originalCanvas || !originalCanvas.chart) {
+                console.error('找不到圖表:', canvasId);
+                return;
+            }
+            
+            const originalChart = originalCanvas.chart;
+            const modal = document.getElementById('chartModal');
+            const modalCanvas = document.getElementById('modalChart');
+            const modalTitle = document.getElementById('modalChartTitle');
+            
+            // 設定標題 (從 summary 中取得 command 名稱)
+            const detailsElement = originalCanvas.closest('details');
+            if (detailsElement) {
+                const summaryText = detailsElement.querySelector('summary code');
+                if (summaryText) {
+                    modalTitle.textContent = '📊 ' + summaryText.textContent;
+                }
+            }
+            
+            // 清除舊的圖表實例
+            if (modalChartInstance) {
+                modalChartInstance.destroy();
+            }
+            
+            // 複製圖表配置
+            const chartConfig = {
+                type: originalChart.config.type,
+                data: JSON.parse(JSON.stringify(originalChart.data)),
+                options: JSON.parse(JSON.stringify(originalChart.options))
+            };
+            
+            // 調整放大圖表的選項
+            chartConfig.options.aspectRatio = 2.5;
+            chartConfig.options.maintainAspectRatio = true;
+            chartConfig.options.plugins.legend.labels.font.size = 14;
+            chartConfig.options.scales.x.ticks.font.size = 12;
+            chartConfig.options.scales.y.ticks.font.size = 12;
+            chartConfig.options.scales.x.title.font.size = 14;
+            chartConfig.options.scales.y.title.font.size = 14;
+            
+            // 創建放大的圖表
+            const ctx = modalCanvas.getContext('2d');
+            modalChartInstance = new Chart(ctx, chartConfig);
+            
+            // 顯示彈出視窗
+            modal.style.display = 'block';
+        }
+        
+        function closeChartModal() {
+            const modal = document.getElementById('chartModal');
+            modal.style.display = 'none';
+            
+            // 清除圖表實例以釋放記憶體
+            if (modalChartInstance) {
+                modalChartInstance.destroy();
+                modalChartInstance = null;
+            }
+        }
+        
+        // 點擊彈出視窗外部時關閉
+        window.onclick = function(event) {
+            const modal = document.getElementById('chartModal');
+            if (event.target === modal) {
+                closeChartModal();
+            }
+        }
+        
+        // ESC 鍵關閉彈出視窗
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeChartModal();
+            }
+        });
 
         function viewRaw(fileId) {
             window.open('/raw/' + fileId, '_blank');
@@ -839,6 +1081,61 @@
                                 item.open = false;
                             });
                         }
+                        
+                        // ==================== 維護區 4: 語言切換函數 (快照版本) ====================
+                        // 注意: 此為快照專用版本,修改時需同步更新維護區 3
+                        function toggleChartLanguage(fileId) {
+                            const canvases = document.querySelectorAll('canvas');
+                            
+                            canvases.forEach(canvas => {
+                                if (canvas.chart) {
+                                    const chart = canvas.chart;
+                                    const currentLang = chart.options.chartLanguage || 'zh';
+                                    const newLang = currentLang === 'zh' ? 'en' : 'zh';
+                                    
+                                    // 語言定義 (需與維護區 3 保持一致)
+                                    const labels = {
+                                        zh: {
+                                            execution: '執行時間',
+                                            mean: '平均值',
+                                            upper: '±1σ 上界',
+                                            lower: '±1σ 下界',
+                                            outlier: '異常值 (IQR)',
+                                            fail: 'Fail',
+                                            yAxis: '秒',
+                                            xAxis: 'Round'
+                                        },
+                                        en: {
+                                            execution: 'Execution Time',
+                                            mean: 'Mean',
+                                            upper: '±1σ Upper',
+                                            lower: '±1σ Lower',
+                                            outlier: 'Outlier (IQR)',
+                                            fail: 'Fail',
+                                            yAxis: 'Seconds',
+                                            xAxis: 'Round'
+                                        }
+                                    };
+                                    
+                                    const lang = labels[newLang];
+                                    
+                                    chart.data.datasets[0].label = lang.execution;
+                                    chart.data.datasets[1].label = lang.mean;
+                                    chart.data.datasets[2].label = lang.upper;
+                                    chart.data.datasets[3].label = lang.lower;
+                                    chart.data.datasets[4].label = lang.outlier;
+                                    chart.data.datasets[5].label = lang.fail;
+                                    
+                                    chart.options.scales.y.title.text = lang.yAxis;
+                                    chart.options.scales.x.title.text = lang.xAxis;
+                                    
+                                    chart.options.chartLanguage = newLang;
+                                    
+                                    chart.update();
+                                }
+                            });
+                        }
+                        // ==================== 維護區 4 結束 ====================
                         
                         // 初始化所有圖表
                         window.addEventListener('DOMContentLoaded', function() {
