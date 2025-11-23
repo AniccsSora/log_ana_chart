@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>檔案上傳</title>
+    <style>
+        body { font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px; }
+        #dropzone { border: 3px dashed #ccc; padding: 50px; text-align: center; margin: 20px 0; cursor: pointer; transition: all 0.3s; }
+        #dropzone:hover { border-color: #666; background: #fafafa; }
+        #dropzone.hover { border-color: #333; background: #f0f0f0; }
+        .file-info { background: #f9f9f9; padding: 15px; margin: 10px 0; border-left: 4px solid #4CAF50; position: relative; }
+        .file-info.status-pass { border-left-color: #4CAF50; }
+        .file-info.status-fail { border-left-color: #f44336; }
+        .file-info.status-unknown { border-left-color: #FF9800; }
+        .upload-time { position: absolute; top: 10px; right: 15px; font-size: 0.75em; color: #666; }
+        .download-btn { background: #4CAF50; color: white; padding: 10px 20px; border: none; cursor: pointer; margin: 5px; border-radius: 4px; }
+        .download-btn:hover { background: #45a049; }
+        .clear-btn { background: #f44336; color: white; padding: 8px 16px; border: none; cursor: pointer; margin: 5px; border-radius: 4px; }
+        .clear-btn:hover { background: #da190b; }
+        pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+        .button-group { margin-top: 10px; }
+        .control-panel { margin: 20px 0; text-align: center; }
+        .control-btn { background: #2196F3; color: white; padding: 10px 20px; border: none; cursor: pointer; margin: 0 5px; border-radius: 4px; }
+        .control-btn:hover { background: #0b7dda; }
+        .file-content { overflow: hidden; transition: max-height 0.3s ease; }
+        .file-content.collapsed { max-height: 0; }
+        .file-content.expanded { max-height: 5000px; }
+        .file-header { cursor: pointer; user-select: none; }
+        .file-header:hover { background: #f0f0f0; }
+        .toggle-icon { display: inline-block; margin-right: 5px; transition: transform 0.3s; }
+        .toggle-icon.collapsed { transform: rotate(-90deg); }
+    </style>
+</head>
+<body>
+    <h1>拖曳檔案上傳</h1>
+    <input type="file" id="fileInput" multiple style="display: none;">
+    <div id="dropzone">拖曳檔案到此處或點擊選擇 (支援多檔案)</div>
+    
+    <div class="control-panel">
+        <button class="control-btn" onclick="expandAll()">全部展開</button>
+        <button class="control-btn" onclick="collapseAll()">全部收合</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const results = document.getElementById('results');
+
+        // 點擊開啟檔案選擇視窗
+        dropzone.onclick = () => fileInput.click();
+
+        // 檔案選擇視窗選擇後
+        fileInput.onchange = (e) => {
+            [...e.target.files].forEach(uploadFile);
+            fileInput.value = ''; // 清空以允許重複選擇相同檔案
+        };
+
+        dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('hover'); };
+        dropzone.ondragleave = () => dropzone.classList.remove('hover');
+        dropzone.ondrop = (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('hover');
+            [...e.dataTransfer.files].forEach(uploadFile);
+        };
+
+        function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            fetch('/upload', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const div = document.createElement('div');
+                        div.className = 'file-info status-' + data.status;
+                        div.id = 'file-' + data.file_id;
+                        div.innerHTML = `
+                            <span class="upload-time">${data.upload_time}</span>
+                            <div class="file-header" onclick="toggleContent('${data.file_id}')">
+                                <h3><span class="toggle-icon" id="icon-${data.file_id}">▼</span>${data.filename}</h3>
+                            </div>
+                            <div class="file-content expanded" id="content-${data.file_id}">
+                                <p><strong>前10行:</strong></p>
+                                <pre>${data.preview.head}</pre>
+                                <p><strong>後10行:</strong></p>
+                                <pre>${data.preview.tail}</pre>
+                                <div class="button-group">
+                                    <button class="download-btn" onclick="download('${data.file_id}')">
+                                        ${data.download_name}
+                                    </button>
+                                    <button class="clear-btn" onclick="clearFile('${data.file_id}')">
+                                        清除
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                        results.insertBefore(div, results.firstChild);
+                    } else {
+                        alert('上傳失敗: ' + data.error);
+                    }
+                });
+        }
+
+        function toggleContent(fileId) {
+            const content = document.getElementById('content-' + fileId);
+            const icon = document.getElementById('icon-' + fileId);
+            
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                content.classList.add('collapsed');
+                icon.classList.add('collapsed');
+            } else {
+                content.classList.remove('collapsed');
+                content.classList.add('expanded');
+                icon.classList.remove('collapsed');
+            }
+        }
+
+        function expandAll() {
+            document.querySelectorAll('.file-content').forEach(content => {
+                content.classList.remove('collapsed');
+                content.classList.add('expanded');
+            });
+            document.querySelectorAll('.toggle-icon').forEach(icon => {
+                icon.classList.remove('collapsed');
+            });
+        }
+
+        function collapseAll() {
+            document.querySelectorAll('.file-content').forEach(content => {
+                content.classList.remove('expanded');
+                content.classList.add('collapsed');
+            });
+            document.querySelectorAll('.toggle-icon').forEach(icon => {
+                icon.classList.add('collapsed');
+            });
+        }
+
+        function download(fileId) {
+            window.location.href = '/download/' + fileId;
+        }
+
+        function clearFile(fileId) {
+            const element = document.getElementById('file-' + fileId);
+            if (element) {
+                element.remove();
+            }
+        }
+    </script>
+</body>
+</html>
