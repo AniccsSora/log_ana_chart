@@ -2,7 +2,8 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>檔案上傳</title>
+    <title>ALE Log Analyzer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🅰️</text></svg>">
     <style>
         body { font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px; }
         #dropzone { border: 3px dashed #ccc; padding: 50px; text-align: center; margin: 20px 0; cursor: pointer; transition: all 0.3s; }
@@ -29,6 +30,18 @@
         .file-header:hover { background: #f0f0f0; }
         .toggle-icon { display: inline-block; margin-right: 5px; transition: transform 0.3s; }
         .toggle-icon.collapsed { transform: rotate(-90deg); }
+        .fail-count { color: #f44336; font-weight: bold; margin-left: 10px; font-size: 0.9em; }
+        .test-summary { background: #e3f2fd; padding: 10px; margin: 10px 0; border-radius: 4px; font-size: 0.9em; }
+        .test-summary strong { color: #1976D2; }
+        .fail-item { background: #ffebee; padding: 10px; margin: 5px 0; border-left: 3px solid #f44336; }
+        .fail-item strong { color: #c62828; }
+        .temp-badge { color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.85em; }
+        .temp-cold { background: #2196F3; }
+        .temp-normal { background: #4CAF50; }
+        .temp-hot { background: #ff5722; }
+        .copy-btn { background: #607D8B; color: white; padding: 4px 12px; border: none; cursor: pointer; border-radius: 3px; font-size: 0.85em; margin-left: 10px; }
+        .copy-btn:hover { background: #455A64; }
+        .copy-btn.copied { background: #4CAF50; }
     </style>
 </head>
 <body>
@@ -76,21 +89,71 @@
                         const div = document.createElement('div');
                         div.className = 'file-info status-' + data.status;
                         div.id = 'file-' + data.file_id;
+                        
+                        // 建立測試摘要 HTML
+                        let summaryHtml = `
+                            <div class="test-summary">
+                                <strong>測試摘要:</strong>
+                                開始時間: ${data.test_info.start_time || 'Unknown'} | 
+                                總測試: ${data.test_info.total_sessions} | 
+                                <span style="color: green;">通過: ${data.test_info.passed}</span> | 
+                                <span style="color: red;">失敗: ${data.test_info.failed}</span> | 
+                                <span style="color: orange;">異常: ${data.test_info.exception}</span>
+                            </div>
+                        `;
+                        
+                        // 建立失敗項目 HTML
+                        let failedHtml = '';
+                        if (data.failed_summaries && data.failed_summaries.length > 0) {
+                            failedHtml = '<div style="margin-top: 10px;"><strong>失敗項目:</strong></div>';
+                            data.failed_summaries.forEach((fail, idx) => {
+                                let tempBadge = '';
+                                if (fail.temperature) {
+                                    let tempClass = 'temp-hot'; // 預設炙熱
+                                    if (fail.temperature < 25) {
+                                        tempClass = 'temp-cold'; // 冰冷
+                                    } else if (fail.temperature <= 55) {
+                                        tempClass = 'temp-normal'; // 常溫
+                                    }
+                                    tempBadge = `<span class="temp-badge ${tempClass}">${fail.temperature} °C</span>`;
+                                }
+                                failedHtml += `
+                                    <div class="fail-item">
+                                        <strong>#${idx + 1} ${fail.command}</strong> ${tempBadge}<br>
+                                        <small>Group: ${fail.group} | Round: ${fail.round} | Time: ${fail.start_time}</small>
+                                        <details style="margin-top: 5px;">
+                                            <summary style="cursor: pointer; color: #1976D2;">
+                                                查看完整 Log
+                                                <button class="copy-btn" onclick="event.stopPropagation(); copyLog(this, 'log-${data.file_id}-${idx}')">複製</button>
+                                            </summary>
+                                            <pre id="log-${data.file_id}-${idx}" style="font-size: 0.85em; max-height: 300px; overflow-y: auto;">${fail.log_full}</pre>
+                                        </details>
+                                    </div>
+                                `;
+                            });
+                        }
+                        
+                        // 組合完整 HTML
                         div.innerHTML = `
                             <span class="upload-time">${data.upload_time}</span>
                             <div class="file-header" onclick="toggleContent('${data.file_id}')">
-                                <h3><span class="toggle-icon" id="icon-${data.file_id}">▼</span>${data.filename}</h3>
+                                <h3>
+                                    <span class="toggle-icon collapsed" id="icon-${data.file_id}">▼</span>${data.filename}
+                                    ${data.test_info.failed > 0 ? `<span class="fail-count">(${data.test_info.failed} fail)</span>` : ''}
+                                </h3>
                             </div>
-                            <div class="file-content expanded" id="content-${data.file_id}">
-                                <p><strong>前10行:</strong></p>
-                                <pre>${data.preview.head}</pre>
-                                <p><strong>後10行:</strong></p>
-                                <pre>${data.preview.tail}</pre>
-                                <div class="button-group">
+                            <div class="file-content collapsed" id="content-${data.file_id}">
+                                ${summaryHtml}
+                                ${failedHtml}
+                                <div class="button-group" style="margin-top: 15px; position: relative;">
                                     <button class="download-btn" onclick="download('${data.file_id}')">
                                         ${data.download_name}
                                     </button>
-                                    <button class="clear-btn" onclick="clearFile('${data.file_id}')">
+                                    ${data.has_fail_report ? 
+                                        `<button class="download-btn" style="background: #ff5722;" onclick="downloadFailReport('${data.file_id}')">
+                                            下載 Fail Report
+                                        </button>` : ''}
+                                    <button class="clear-btn" onclick="clearFile('${data.file_id}')" style="position: absolute; bottom: 0; right: 0;">
                                         清除
                                     </button>
                                 </div>
@@ -142,11 +205,33 @@
             window.location.href = '/download/' + fileId;
         }
 
+        function downloadFailReport(fileId) {
+            window.location.href = '/download_fail_report/' + fileId;
+        }
+
         function clearFile(fileId) {
             const element = document.getElementById('file-' + fileId);
             if (element) {
                 element.remove();
             }
+        }
+
+        function copyLog(button, logId) {
+            const logElement = document.getElementById(logId);
+            const text = logElement.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = button.textContent;
+                button.textContent = '✓ 已複製';
+                button.classList.add('copied');
+                
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                alert('複製失敗: ' + err);
+            });
         }
     </script>
 </body>
