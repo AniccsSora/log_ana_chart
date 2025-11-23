@@ -224,11 +224,20 @@
                             commandExecutionsHtml = `
                                 <details style="margin-top: 15px; background: #f0f7ff; padding: 12px; border-radius: 6px; border: 2px solid #1976D2;">
                                     <summary style="cursor: pointer; color: #1976D2; font-weight: bold; font-size: 1.05em;">
-                                        📊 所有 Command 執行記錄 (${totalCommands} 個不同的 Command)
+                                        📊 Command 執行記錄 (${totalCommands} 項測試)
                                         <button class="copy-btn" onclick="event.stopPropagation(); downloadCSV('${data.file_id}', this)" style="margin-left: 10px;">下載 CSV</button>
                                         <span class="snapshot-help-icon" title="顯示所有測試 Command 的執行統計資訊。&#10;&#10;• 按平均執行時間降序排列(最慢的在最上面)&#10;• 點擊每個 Command 可查看詳細執行記錄&#10;• 包含每次執行的 Group、Round、時間、結果和溫度&#10;• 可下載 CSV 檔案進行進一步分析">?</span>
                                     </summary>
-                                    <div style="margin-top: 12px;">
+                                    <div style="margin-top: 12px; max-height: 600px; overflow-y: auto;">
+                                        <div style="margin-bottom: 10px; padding: 8px; background: #fff; border-radius: 4px; border: 1px solid #ddd; position: sticky; top: 0; z-index: 10;">
+                                            <strong style="color: #1976D2;">📈 統計圖表說明</strong>
+                                            <span class="help-icon" style="cursor: pointer;" title="圖表統計方法說明：&#10;&#10;🟦 藍色折線：實際執行時間&#10;🟩 綠色虛線：平均值 (Mean)&#10;🟨 黃色虛線：±1σ 標準差範圍 (約68%數據落在此區間)&#10;🟧 橘色三角：異常值 (使用IQR四分位距方法檢測)&#10;🟥 紅色圓點：測試失敗&#10;&#10;標準差 (σ)：數值越小表示執行時間越穩定&#10;IQR 異常值檢測：Q1-1.5×IQR 到 Q3+1.5×IQR 範圍外視為異常&#10;&#10;可評估：&#10;• 識別性能不穩定的測試&#10;• 發現執行時間異常的 Round&#10;• 評估測試可靠性">?</span>
+                                            <span style="margin-left: 15px;">
+                                                <button class="control-btn" onclick="expandOutliers('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #FF9800; margin: 0 3px;">展開異常值</button>
+                                                <button class="control-btn" onclick="expandFails('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #f44336; margin: 0 3px;">展開失敗項</button>
+                                                <button class="control-btn" onclick="collapseAllCharts('${data.file_id}')" style="padding: 5px 12px; font-size: 0.85em; background: #757575; margin: 0 3px;">全部收合</button>
+                                            </span>
+                                        </div>
                                         ${commandsWithAvg.map(({ cmd, executions, avgDuration }) => {
                                             const failCount = executions.filter(e => e.result === 'Fail').length;
                                             const passCount = executions.filter(e => e.result === 'Pass').length;
@@ -274,7 +283,7 @@
                                             if (validDurations.length > 0) {
                                                 statsInfo = ` | σ=${stdDev.toFixed(3)}s`;
                                                 if (outliers.length > 0) {
-                                                    statsInfo += ` | <span style="color: #d32f2f; font-weight: bold;">⚠ ${outliers.length} 個異常值</span>`;
+                                                    statsInfo += ` | <span style="color: #de9502; font-weight: bold;">⚠ ${outliers.length} 個異常值</span>`;
                                                 }
                                             }
                                             
@@ -297,7 +306,7 @@
                                             }).join('');
                                             
                                             return `
-                                                <details style="margin-bottom: 10px; background: white; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+                                                <details class="cmd-chart-item" data-file-id="${data.file_id}" data-has-outliers="${outliers.length > 0}" data-has-fails="${failCount > 0}" style="margin-bottom: 10px; background: white; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
                                                     <summary style="cursor: pointer; font-weight: bold;">
                                                         <code style="background: #e8e8e8; padding: 2px 6px; border-radius: 3px;">${cmd}</code>
                                                         <span style="margin-left: 10px; font-size: 0.9em;">
@@ -561,6 +570,30 @@
                 icon.classList.add('collapsed');
             });
         }
+        
+        // 展開所有有異常值的圖表
+        function expandOutliers(fileId) {
+            const items = document.querySelectorAll(`.cmd-chart-item[data-file-id="${fileId}"][data-has-outliers="true"]`);
+            items.forEach(item => {
+                item.open = true;
+            });
+        }
+        
+        // 展開所有有失敗的圖表
+        function expandFails(fileId) {
+            const items = document.querySelectorAll(`.cmd-chart-item[data-file-id="${fileId}"][data-has-fails="true"]`);
+            items.forEach(item => {
+                item.open = true;
+            });
+        }
+        
+        // 收合該檔案的所有圖表
+        function collapseAllCharts(fileId) {
+            const items = document.querySelectorAll(`.cmd-chart-item[data-file-id="${fileId}"]`);
+            items.forEach(item => {
+                item.open = false;
+            });
+        }
 
         function viewRaw(fileId) {
             window.open('/raw/' + fileId, '_blank');
@@ -780,6 +813,30 @@
                             });
                             document.querySelectorAll('.toggle-icon').forEach(icon => {
                                 icon.classList.add('collapsed');
+                            });
+                        }
+                        
+                        // 展開所有有異常值的圖表
+                        function expandOutliers(fileId) {
+                            const items = document.querySelectorAll('.cmd-chart-item[data-file-id="' + fileId + '"][data-has-outliers="true"]');
+                            items.forEach(item => {
+                                item.open = true;
+                            });
+                        }
+                        
+                        // 展開所有有失敗的圖表
+                        function expandFails(fileId) {
+                            const items = document.querySelectorAll('.cmd-chart-item[data-file-id="' + fileId + '"][data-has-fails="true"]');
+                            items.forEach(item => {
+                                item.open = true;
+                            });
+                        }
+                        
+                        // 收合該檔案的所有圖表
+                        function collapseAllCharts(fileId) {
+                            const items = document.querySelectorAll('.cmd-chart-item[data-file-id="' + fileId + '"]');
+                            items.forEach(item => {
+                                item.open = false;
                             });
                         }
                         
