@@ -15,7 +15,43 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 processed_files = {}
 
 @app.route('/')
-def index():
+def root():
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>ALE Tools</title>
+        <style>
+            body { font-family: Arial; max-width: 600px; margin: 100px auto; padding: 20px; text-align: center; }
+            h1 { color: #1976D2; }
+            .tool-link { 
+                display: inline-block;
+                background: #4CAF50; 
+                color: white; 
+                padding: 15px 30px; 
+                margin: 10px;
+                text-decoration: none; 
+                border-radius: 8px;
+                font-size: 1.1em;
+                transition: all 0.3s;
+            }
+            .tool-link:hover { 
+                background: #45a049;
+                transform: scale(1.05);
+            }
+        </style>
+    </head>
+    <body>
+        <h1>🔧 ALE Tools</h1>
+        <p>選擇您要使用的工具：</p>
+        <a href="/parselog" class="tool-link">📊 Log Parser</a>
+    </body>
+    </html>
+    '''
+
+@app.route('/parselog')
+def parselog():
     return render_template('index.html')
 
 @app.route('/upload', methods=['POST'])
@@ -60,8 +96,8 @@ def upload():
     # 生成下載按鈕名稱
     download_name = f"下載 {file.filename}"
     
-    # 記錄上傳時間
-    upload_time = datetime.now().strftime('%H:%M:%S')
+    # 記錄上傳時間（完整格式）
+    upload_time = datetime.now().strftime('%m-%d-%Y %H:%M:%S')
     
     # 判斷測試結果狀態
     if parse_result['failed_count'] > 0:
@@ -91,6 +127,12 @@ def upload():
         }
         failed_summaries.append(summary)
     
+    # 統計所有 command 執行時間（用於折疊區塊）
+    command_executions = _collect_command_executions(parse_result['all_sessions'])
+    
+    # CSV 下載檔名（與原始檔名一致，只改副檔名）
+    csv_download_name = file.filename.replace('.log', '_time_stat.csv')
+    
     return jsonify({
         'success': True,
         'filename': file.filename,
@@ -102,12 +144,47 @@ def upload():
             'exception': parse_result['exception_count']
         },
         'failed_summaries': failed_summaries,
+        'command_executions': command_executions,
         'has_fail_report': fail_report_path is not None,
         'file_id': file_id,
         'download_name': download_name,
+        'csv_download_name': csv_download_name,
         'upload_time': upload_time,
         'status': status
     })
+
+
+def _collect_command_executions(all_sessions: list) -> dict:
+    """
+    統計每個完整 Command 的所有執行記錄
+    
+    Returns:
+        dict: {
+            'Command: diag_tool_info version 1.0.0': [
+                {'group': 'test1', 'round': 1, 'start_time': '...', 'duration': 1.23, 'result': 'Pass'},
+                {'group': 'test1', 'round': 2, 'start_time': '...', 'duration': 1.45, 'result': 'Pass'}
+            ]
+        }
+    """
+    command_map = {}
+    
+    for session in all_sessions:
+        full_command = session.command  # 完整的 Command 字串
+        
+        if full_command not in command_map:
+            command_map[full_command] = []
+        
+        execution_record = {
+            'group': session.group_name,
+            'round': session.round_number,
+            'start_time': session.start_time,
+            'duration': session.duration_seconds,
+            'result': session.result,
+            'temperature': session.temperature
+        }
+        command_map[full_command].append(execution_record)
+    
+    return command_map
 
 
 def _generate_fail_report(failed_sessions: list, output_path: str):
@@ -158,6 +235,46 @@ def download_fail_report(file_id):
     
     report_name = file_info['original_name'].replace('.log', '_fail_report.txt')
     return send_file(file_info['fail_report_path'], as_attachment=True, download_name=report_name)
+
+
+@app.route('/download_csv/<file_id>')
+def download_csv(file_id):
+    """下載 command executions CSV"""
+    if file_id not in processed_files:
+        return "檔案不存在", 404
+    
+    file_info = processed_files[file_id]
+    parse_result = file_info['parse_result']
+    
+    # 生成 CSV 內容
+    csv_lines = []
+    csv_lines.append('Command,Group,Round,Start Time,Duration (s),Result,Temperature (°C)')
+    
+    for session in parse_result['all_sessions']:
+        duration_str = f"{session.duration_seconds:.2f}" if session.duration_seconds else ""
+        temp_str = str(session.temperature) if session.temperature else ""
+        
+        # CSV 格式：如果 command 包含逗號，需要用雙引號包起來
+        command_escaped = f'"{session.command}"' if ',' in session.command else session.command
+        
+        csv_lines.append(
+            f'{command_escaped},{session.group_name},{session.round_number},'
+            f'{session.start_time},{duration_str},{session.result},{temp_str}'
+        )
+    
+    csv_content = '\n'.join(csv_lines)
+    
+    # 儲存 CSV 檔案
+    csv_path = file_info['path'].replace('.log', '_time_stat.csv')
+    with open(csv_path, 'w', encoding='utf-8-sig') as f:  # 使用 utf-8-sig 以支援 Excel
+        f.write(csv_content)
+    
+    # 直接使用原始檔名，只替換副檔名
+    original_name = file_info['original_name']
+    csv_name = original_name.replace('.log', '_time_stat.csv')
+    
+    return send_file(csv_path, as_attachment=True, download_name=csv_name)
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

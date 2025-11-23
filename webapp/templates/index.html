@@ -13,7 +13,15 @@
         .file-info.status-pass { border-left-color: #4CAF50; }
         .file-info.status-fail { border-left-color: #f44336; }
         .file-info.status-unknown { border-left-color: #FF9800; }
-        .upload-time { position: absolute; top: 10px; right: 15px; font-size: 0.75em; color: #666; }
+        .upload-time { 
+            position: absolute; 
+            top: 10px; 
+            right: 15px; 
+            font-size: 0.75em; 
+            color: #666; 
+            text-align: right;
+            line-height: 1.4;
+        }
         .download-btn { background: #4CAF50; color: white; padding: 10px 20px; border: none; cursor: pointer; margin: 5px; border-radius: 4px; }
         .download-btn:hover { background: #45a049; }
         .clear-btn { background: #f44336; color: white; padding: 8px 16px; border: none; cursor: pointer; margin: 5px; border-radius: 4px; }
@@ -42,6 +50,61 @@
         .copy-btn { background: #607D8B; color: white; padding: 4px 12px; border: none; cursor: pointer; border-radius: 3px; font-size: 0.85em; margin-left: 10px; }
         .copy-btn:hover { background: #455A64; }
         .copy-btn.copied { background: #4CAF50; }
+        .help-icon { 
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            background: #2196F3;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 18px;
+            font-size: 0.8em;
+            margin-left: 8px;
+            cursor: help;
+            font-weight: bold;
+        }
+        .help-icon:hover { 
+            background: #1976D2;
+            cursor: none;
+        }
+        .snapshot-help-icon {
+            display: inline-block;
+            width: 22px;
+            height: 22px;
+            background: #2196F3;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 22px;
+            font-size: 0.9em;
+            margin-left: 8px;
+            cursor: help;
+            font-weight: bold;
+        }
+        .snapshot-help-icon:hover { 
+            background: #1976D2;
+        }
+        .snapshot-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: #9C27B0;
+            color: white;
+            padding: 15px 25px;
+            border: none;
+            cursor: pointer;
+            border-radius: 50px;
+            font-size: 1em;
+            font-weight: bold;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+            transition: all 0.3s;
+        }
+        .snapshot-btn:hover {
+            background: #7B1FA2;
+            transform: scale(1.05);
+        }
     </style>
 </head>
 <body>
@@ -55,11 +118,23 @@
     </div>
     
     <div id="results"></div>
+    
+    <button class="snapshot-btn" id="snapshotBtn" onclick="downloadSnapshot()" style="display: none;">
+        💾 儲存頁面快照
+        <span class="snapshot-help-icon" title="下載當前頁面的完整副本，包含所有統計數據和分析結果。&#10;&#10;• 可離線查看，不依賴任何伺服器&#10;• 保留所有展開/收合狀態&#10;• 移除上傳和下載功能，僅供閱讀&#10;• 適合長期保存或分享分析結果">?</span>
+    </button>
 
     <script>
         const dropzone = document.getElementById('dropzone');
         const fileInput = document.getElementById('fileInput');
         const results = document.getElementById('results');
+        const snapshotBtn = document.getElementById('snapshotBtn');
+        
+        // 檢查是否有上傳的檔案，控制快照按鈕顯示
+        function updateSnapshotButton() {
+            const hasFiles = results.children.length > 0;
+            snapshotBtn.style.display = hasFiles ? 'block' : 'none';
+        }
 
         // 點擊開啟檔案選擇視窗
         dropzone.onclick = () => fileInput.click();
@@ -89,6 +164,7 @@
                         const div = document.createElement('div');
                         div.className = 'file-info status-' + data.status;
                         div.id = 'file-' + data.file_id;
+                        div.dataset.csvName = data.csv_download_name; // 儲存 CSV 檔名
                         
                         // 建立測試摘要 HTML
                         let summaryHtml = `
@@ -101,6 +177,93 @@
                                 <span style="color: orange;">異常: ${data.test_info.exception}</span>
                             </div>
                         `;
+                        
+                        // 建立所有 Command 執行記錄的統一折疊區塊
+                        let commandExecutionsHtml = '';
+                        if (data.command_executions && Object.keys(data.command_executions).length > 0) {
+                            const totalCommands = Object.keys(data.command_executions).length;
+                            
+                            // 計算每個 Command 的平均執行時間並排序
+                            const commandsWithAvg = Object.entries(data.command_executions).map(([cmd, executions]) => {
+                                const validDurations = executions.filter(e => e.duration).map(e => e.duration);
+                                const avgDuration = validDurations.length > 0 
+                                    ? validDurations.reduce((a, b) => a + b, 0) / validDurations.length 
+                                    : 0;
+                                return { cmd, executions, avgDuration };
+                            });
+                            
+                            // 按平均執行時間降序排序（最長的在上面）
+                            commandsWithAvg.sort((a, b) => b.avgDuration - a.avgDuration);
+                            
+                            commandExecutionsHtml = `
+                                <details style="margin-top: 15px; background: #f0f7ff; padding: 12px; border-radius: 6px; border: 2px solid #1976D2;">
+                                    <summary style="cursor: pointer; color: #1976D2; font-weight: bold; font-size: 1.05em;">
+                                        📊 所有 Command 執行記錄 (${totalCommands} 個不同的 Command)
+                                        <button class="copy-btn" onclick="event.stopPropagation(); downloadCSV('${data.file_id}', this)" style="margin-left: 10px;">下載 CSV</button>
+                                        <span class="help-icon" title="顯示所有測試 Command 的執行統計資訊。&#10;&#10;• 按平均執行時間降序排列（最慢的在最上面）&#10;• 點擊每個 Command 可查看詳細執行記錄&#10;• 包含每次執行的 Group、Round、時間、結果和溫度&#10;• 可下載 CSV 檔案進行進一步分析">?</span>
+                                    </summary>
+                                    <div style="margin-top: 12px;">
+                                        ${commandsWithAvg.map(({ cmd, executions, avgDuration }) => {
+                                            const failCount = executions.filter(e => e.result === 'Fail').length;
+                                            const passCount = executions.filter(e => e.result === 'Pass').length;
+                                            const exceptionCount = executions.filter(e => e.result === 'Exception').length;
+                                            const avgDurationStr = avgDuration > 0 ? `平均 ${avgDuration.toFixed(2)}s` : '無時間資料';
+                                            
+                                            // 只顯示非零的結果統計
+                                            let resultStats = [];
+                                            if (passCount > 0) resultStats.push(`<span style="color: green;">Pass: ${passCount}</span>`);
+                                            if (failCount > 0) resultStats.push(`<span style="color: red;">Fail: ${failCount}</span>`);
+                                            if (exceptionCount > 0) resultStats.push(`<span style="color: orange;">Exception: ${exceptionCount}</span>`);
+                                            const resultStatsStr = resultStats.join(' | ');
+                                            
+                                            return `
+                                                <details style="margin-bottom: 10px; background: white; padding: 8px; border-radius: 4px; border: 1px solid #ddd;">
+                                                    <summary style="cursor: pointer; font-weight: bold;">
+                                                        <code style="background: #e8e8e8; padding: 2px 6px; border-radius: 3px;">${cmd}</code>
+                                                        <span style="margin-left: 10px; font-size: 0.9em;">
+                                                            <span style="background: #fff3cd; padding: 2px 6px; border-radius: 3px; color: #856404;">${avgDurationStr}</span> |
+                                                            執行 ${executions.length} 次 - 
+                                                            ${resultStatsStr}
+                                                        </span>
+                                                    </summary>
+                                                    <div style="margin-top: 8px; max-height: 300px; overflow-y: auto;">
+                                                        <table style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
+                                                            <thead>
+                                                                <tr style="background: #e0e0e0;">
+                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Group</th>
+                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Round</th>
+                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Start Time</th>
+                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Duration (s)</th>
+                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Result</th>
+                                                                    <th style="padding: 6px; border: 1px solid #ccc;">Temp (°C)</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                ${executions.map(exec => {
+                                                                    const resultColor = exec.result === 'Pass' ? 'green' : (exec.result === 'Fail' ? 'red' : 'orange');
+                                                                    const durationStr = exec.duration ? exec.duration.toFixed(2) : 'N/A';
+                                                                    const tempStr = exec.temperature || '-';
+                                                                    return `
+                                                                        <tr>
+                                                                            <td style="padding: 6px; border: 1px solid #ccc;">${exec.group}</td>
+                                                                            <td style="padding: 6px; border: 1px solid #ccc; text-align: center;">${exec.round}</td>
+                                                                            <td style="padding: 6px; border: 1px solid #ccc;">${exec.start_time}</td>
+                                                                            <td style="padding: 6px; border: 1px solid #ccc; text-align: right;">${durationStr}</td>
+                                                                            <td style="padding: 6px; border: 1px solid #ccc; color: ${resultColor}; font-weight: bold;">${exec.result}</td>
+                                                                            <td style="padding: 6px; border: 1px solid #ccc; text-align: right;">${tempStr}</td>
+                                                                        </tr>
+                                                                    `;
+                                                                }).join('')}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </details>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                </details>
+                            `;
+                        }
                         
                         // 建立失敗項目 HTML
                         let failedHtml = '';
@@ -117,6 +280,7 @@
                                     }
                                     tempBadge = `<span class="temp-badge ${tempClass}">${fail.temperature} °C</span>`;
                                 }
+                                
                                 failedHtml += `
                                     <div class="fail-item">
                                         <strong>#${idx + 1} ${fail.command}</strong> ${tempBadge}<br>
@@ -135,7 +299,7 @@
                         
                         // 組合完整 HTML
                         div.innerHTML = `
-                            <span class="upload-time">${data.upload_time}</span>
+                            <span class="upload-time">Upload time:<br>${data.upload_time}</span>
                             <div class="file-header" onclick="toggleContent('${data.file_id}')">
                                 <h3>
                                     <span class="toggle-icon collapsed" id="icon-${data.file_id}">▼</span>${data.filename}
@@ -144,22 +308,24 @@
                             </div>
                             <div class="file-content collapsed" id="content-${data.file_id}">
                                 ${summaryHtml}
+                                ${commandExecutionsHtml}
                                 ${failedHtml}
                                 <div class="button-group" style="margin-top: 15px; position: relative;">
-                                    <button class="download-btn" onclick="download('${data.file_id}')">
+                                    <button class="download-btn" onclick="download('${data.file_id}')" title="下載原始 log 檔案">
                                         ${data.download_name}
                                     </button>
                                     ${data.has_fail_report ? 
-                                        `<button class="download-btn" style="background: #ff5722;" onclick="downloadFailReport('${data.file_id}')">
+                                        `<button class="download-btn" style="background: #ff5722;" onclick="downloadFailReport('${data.file_id}')" title="統整 log 中的所有 fail 區塊">
                                             下載 Fail Report
                                         </button>` : ''}
-                                    <button class="clear-btn" onclick="clearFile('${data.file_id}')" style="position: absolute; bottom: 0; right: 0;">
+                                    <button class="clear-btn" onclick="clearFile('${data.file_id}')" style="position: absolute; bottom: 0; right: 0;" title="移除此統計項目折疊">
                                         清除
                                     </button>
                                 </div>
                             </div>
                         `;
                         results.insertBefore(div, results.firstChild);
+                        updateSnapshotButton(); // 更新快照按鈕顯示狀態
                     } else {
                         alert('上傳失敗: ' + data.error);
                     }
@@ -208,11 +374,41 @@
         function downloadFailReport(fileId) {
             window.location.href = '/download_fail_report/' + fileId;
         }
+        
+        function downloadCSV(fileId, button) {
+            // 從 DOM 中取得該 fileId 的 command_executions 資料
+            const fileElement = document.getElementById('file-' + fileId);
+            if (!fileElement) {
+                alert('找不到檔案資料');
+                return;
+            }
+            
+            // 獲取正確的 CSV 檔名
+            const csvFileName = fileElement.dataset.csvName || 'time_stat.csv';
+            
+            // 從全局變數或重新從 data 取得（需要後端支援）
+            fetch('/download_csv/' + fileId)
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = csvFileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                })
+                .catch(err => {
+                    alert('下載 CSV 失敗: ' + err);
+                });
+        }
 
         function clearFile(fileId) {
             const element = document.getElementById('file-' + fileId);
             if (element) {
                 element.remove();
+                updateSnapshotButton(); // 更新快照按鈕顯示狀態
             }
         }
 
@@ -232,6 +428,116 @@
             }).catch(err => {
                 alert('複製失敗: ' + err);
             });
+        }
+        
+        function downloadSnapshot() {
+            // 複製當前頁面的 HTML（使用 true 進行深度複製）
+            const htmlContent = document.documentElement.cloneNode(true);
+            
+            // 移除上傳區域和控制面板（這些是模板中的靜態元素）
+            const dropzone = htmlContent.querySelector('#dropzone');
+            const fileInput = htmlContent.querySelector('#fileInput');
+            const controlPanel = htmlContent.querySelector('.control-panel');
+            const snapshotBtn = htmlContent.querySelector('.snapshot-btn');
+            const h1 = htmlContent.querySelector('h1');
+            
+            if (dropzone) dropzone.remove();
+            if (fileInput) fileInput.remove();
+            if (controlPanel) controlPanel.remove();
+            if (snapshotBtn) snapshotBtn.remove();
+            if (h1) h1.textContent = 'ALE Log Analysis Report (Snapshot)';
+            
+            // 移除所有按鈕（但保留折疊功能）
+            htmlContent.querySelectorAll('.download-btn, .clear-btn, .copy-btn').forEach(btn => btn.remove());
+            
+            // 移除上傳相關的事件處理器，但保留 toggleContent
+            const scripts = htmlContent.querySelectorAll('script');
+            scripts.forEach(script => {
+                const scriptText = script.textContent;
+                // 只保留必要的 toggleContent 函數和相關功能
+                if (scriptText.includes('uploadFile') || scriptText.includes('downloadCSV') || 
+                    scriptText.includes('download(') || scriptText.includes('downloadFailReport') ||
+                    scriptText.includes('clearFile') || scriptText.includes('copyLog') ||
+                    scriptText.includes('updateSnapshotButton') || scriptText.includes('downloadSnapshot')) {
+                    // 移除不需要的函數，但保留 toggleContent, expandAll, collapseAll
+                    const essentialScript = `
+                        function toggleContent(fileId) {
+                            const content = document.getElementById('content-' + fileId);
+                            const icon = document.getElementById('icon-' + fileId);
+                            
+                            if (content.classList.contains('expanded')) {
+                                content.classList.remove('expanded');
+                                content.classList.add('collapsed');
+                                icon.classList.add('collapsed');
+                            } else {
+                                content.classList.remove('collapsed');
+                                content.classList.add('expanded');
+                                icon.classList.remove('collapsed');
+                            }
+                        }
+
+                        function expandAll() {
+                            document.querySelectorAll('.file-content').forEach(content => {
+                                content.classList.remove('collapsed');
+                                content.classList.add('expanded');
+                            });
+                            document.querySelectorAll('.toggle-icon').forEach(icon => {
+                                icon.classList.remove('collapsed');
+                            });
+                        }
+
+                        function collapseAll() {
+                            document.querySelectorAll('.file-content').forEach(content => {
+                                content.classList.remove('expanded');
+                                content.classList.add('collapsed');
+                            });
+                            document.querySelectorAll('.toggle-icon').forEach(icon => {
+                                icon.classList.add('collapsed');
+                            });
+                        }
+                    `;
+                    script.textContent = essentialScript;
+                } else {
+                    script.remove();
+                }
+            });
+            
+            // 更新標題
+            const title = htmlContent.querySelector('title');
+            if (title) {
+                title.textContent = 'ALE Log Analysis Report - ' + new Date().toLocaleString('zh-TW');
+            }
+            
+            // 在頂部添加快照資訊和控制按鈕
+            const body = htmlContent.querySelector('body');
+            if (body) {
+                const infoDiv = document.createElement('div');
+                infoDiv.style.cssText = 'background: #fff3cd; padding: 15px; margin: 20px 0; border-left: 4px solid #ffc107; border-radius: 4px;';
+                infoDiv.innerHTML = `
+                    <strong>📸 頁面快照</strong><br>
+                    <small>生成時間: ${new Date().toLocaleString('zh-TW')}</small><br>
+                    <small>此為靜態快照，僅供閱讀。檔案數量: ${document.getElementById('results').children.length}</small>
+                    <div style="margin-top: 10px;">
+                        <button class="control-btn" onclick="expandAll()">全部展開</button>
+                        <button class="control-btn" onclick="collapseAll()">全部收合</button>
+                    </div>
+                `;
+                body.insertBefore(infoDiv, body.firstChild);
+            }
+            
+            // 生成完整的 HTML 字串
+            const htmlString = '<!DOCTYPE html>\n' + htmlContent.outerHTML;
+            
+            // 建立下載連結
+            const blob = new Blob([htmlString], { type: 'text/html;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ale_log_report_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5) + '.html';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
         }
     </script>
 </body>
