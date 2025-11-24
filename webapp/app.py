@@ -2,9 +2,15 @@ from flask import Flask, request, render_template, send_file, jsonify
 import os
 from datetime import datetime
 from module import test_session_parser as tsp
+import threading
+import time
+import uuid
 
 
 app = Flask(__name__)
+
+# 儲存處理進度的字典 (job_id -> progress_info)
+processing_jobs = {}
 
 # 根據今天日期建立上傳資料夾
 today_folder = datetime.now().strftime('%m_%d_%Y')
@@ -79,116 +85,223 @@ def upload():
     if file.filename == '':
         return jsonify({'success': False, 'error': '檔案名稱為空'})
     
-    # 讀取檔案內容
-    content = file.read().decode('utf-8', errors='ignore')
-    lines = content.splitlines()
-    
-    # 解析 log 檔案
-    print(f"\n===== 開始解析: {file.filename} =====")
-    parse_result = tsp.parse_diag_log(lines)
-
-    print("============================================")
-    print(f"解析結果: {file.filename}")
-    print(f"上傳時間: {datetime.now().strftime('%m-%d %H:%M:%S')}")
-    print(f"測試開始時間: {parse_result['test_start_time']}")
-    print(f"總測試項目: {parse_result['total_sessions']}")
-    print(f"Pass: {parse_result['passed_count']}")
-    print(f"Fail: {parse_result['failed_count']}")
-    print(f"Exception: {parse_result['exception_count']}")
-    print(f"===========================================")
-    # 儲存檔案
+    # 生成唯一的 job ID
+    job_id = str(uuid.uuid4())
     file_id = f"{int(datetime.now().timestamp() * 1000)}_{file.filename}"
-    save_path = os.path.join(app.config['UPLOAD_FOLDER'], file_id)
     
-    # 確保目錄存在並處理權限錯誤
-    try:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    except PermissionError:
-        return jsonify({'success': False, 'error': '伺服器權限不足,無法建立上傳目錄'})
+    # 讀取檔案內容 (快速,不會阻塞)
+    content = file.read().decode('utf-8', errors='ignore')
+    file_size_mb = len(content) / (1024 * 1024)  # MB
     
-    # 寫入檔案並處理權限錯誤
-    try:
-        with open(save_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        # Linux 環境下設定檔案權限
-        if os.name != 'nt':
-            os.chmod(save_path, 0o664)  # rw-rw-r--
-    except PermissionError:
-        return jsonify({'success': False, 'error': '伺服器權限不足,無法儲存檔案'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'儲存檔案時發生錯誤: {str(e)}'})
-    
-    # 如果有 fail 項目，生成 fail report
-    fail_report_path = None
-    if parse_result['failed_count'] > 0:
-        fail_report_path = save_path.replace('.log', '_fail_report.txt')
-        try:
-            _generate_fail_report(parse_result['failed_sessions'], fail_report_path)
-            if os.name != 'nt':
-                os.chmod(fail_report_path, 0o664)
-        except Exception as e:
-            print(f"警告: 無法生成 fail report: {e}")
-    
-    # 生成下載按鈕名稱
-    download_name = f"下載 {file.filename}"
-    
-    # 記錄上傳時間（完整格式）
-    upload_time = datetime.now().strftime('%m-%d-%Y %H:%M:%S')
-    
-    # 判斷測試結果狀態
-    if parse_result['failed_count'] > 0:
-        status = 'fail'
-    elif parse_result['exception_count'] > 0:
-        status = 'unknown'
-    else:
-        status = 'pass'
-    
-    processed_files[file_id] = {
-        'path': save_path,
-        'original_name': file.filename,
-        'parse_result': parse_result,
-        'fail_report_path': fail_report_path
+    # 初始化進度資訊
+    processing_jobs[job_id] = {
+        'status': 'processing',
+        'progress': 0,
+        'message': '開始處理...',
+        'file_id': file_id,
+        'filename': file.filename,
+        'file_size_mb': f"{file_size_mb:.2f}",
+        'start_time': datetime.now().strftime('%m-%d-%Y %H:%M:%S'),
+        'result': None
     }
     
-    # 準備 failed sessions 的摘要資訊
-    failed_summaries = []
-    for session in parse_result['failed_sessions'][:10]:  # 只傳前10個
-        summary = {
-            'command': session.command_name,
-            'group': session.group_name,
-            'round': session.round_number,
-            'start_time': session.start_time,
-            'temperature': session.temperature,
-            'log_full': '\n'.join(session.log_content)  # 完整 log 包含 Result 和 End time
-        }
-        failed_summaries.append(summary)
+    # 啟動背景執行緒處理檔案
+    thread = threading.Thread(
+        target=_process_file_async,
+        args=(job_id, file_id, file.filename, content)
+    )
+    thread.daemon = True
+    thread.start()
     
-    # 統計所有 command 執行時間（用於折疊區塊）
-    command_executions = _collect_command_executions(parse_result['all_sessions'])
-    
-    # CSV 下載檔名（與原始檔名一致，只改副檔名）
-    csv_download_name = file.filename.replace('.log', '_time_stat.csv')
-    
+    # 立即返回 job_id,讓前端可以輪詢進度
     return jsonify({
         'success': True,
-        'filename': file.filename,
-        'test_info': {
-            'start_time': parse_result['test_start_time'],
-            'total_sessions': parse_result['total_sessions'],
-            'passed': parse_result['passed_count'],
-            'failed': parse_result['failed_count'],
-            'exception': parse_result['exception_count']
-        },
-        'failed_summaries': failed_summaries,
-        'command_executions': command_executions,
-        'has_fail_report': fail_report_path is not None,
-        'file_id': file_id,
-        'download_name': download_name,
-        'csv_download_name': csv_download_name,
-        'upload_time': upload_time,
-        'status': status
+        'job_id': job_id,
+        'message': f'檔案已接收 ({file_size_mb:.2f} MB),正在處理中...'
     })
+
+# 查詢處理進度的 API
+@app.route('/progress/<job_id>', methods=['GET'])
+def get_progress(job_id):
+    if job_id not in processing_jobs:
+        return jsonify({'success': False, 'error': '找不到該處理任務'})
+    
+    job_info = processing_jobs[job_id]
+    
+    if job_info['status'] == 'completed':
+        # 處理完成,返回結果
+        return jsonify({
+            'success': True,
+            'status': 'completed',
+            'progress': 100,
+            'result': job_info['result']
+        })
+    elif job_info['status'] == 'error':
+        # 處理失敗
+        return jsonify({
+            'success': False,
+            'status': 'error',
+            'error': job_info.get('error', '未知錯誤')
+        })
+    else:
+        # 處理中
+        return jsonify({
+            'success': True,
+            'status': 'processing',
+            'progress': job_info['progress'],
+            'message': job_info['message']
+        })
+
+# 背景處理函數
+def _process_file_async(job_id, file_id, filename, content):
+    """
+    在背景執行緒中處理檔案
+    """
+    try:
+        # 更新進度: 10% - 開始解析
+        processing_jobs[job_id]['progress'] = 10
+        processing_jobs[job_id]['message'] = '正在解析 log 檔案...'
+        
+        lines = content.splitlines()
+        
+        # 解析 log 檔案
+        print(f"\n===== 開始解析: {filename} =====")
+        processing_jobs[job_id]['progress'] = 30
+        processing_jobs[job_id]['message'] = f'正在解析 {len(lines)} 行資料...'
+        
+        parse_result = tsp.parse_diag_log(lines)
+
+        print("============================================")
+        print(f"解析結果: {filename}")
+        print(f"上傳時間: {datetime.now().strftime('%m-%d %H:%M:%S')}")
+        print(f"測試開始時間: {parse_result['test_start_time']}")
+        print(f"總測試項目: {parse_result['total_sessions']}")
+        print(f"Pass: {parse_result['passed_count']}")
+        print(f"Fail: {parse_result['failed_count']}")
+        print(f"Exception: {parse_result['exception_count']}")
+        print(f"===========================================")
+        
+        # 更新進度: 50% - 儲存檔案
+        processing_jobs[job_id]['progress'] = 50
+        processing_jobs[job_id]['message'] = '正在儲存檔案...'
+        
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], file_id)
+        
+        # 確保目錄存在
+        try:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        except PermissionError:
+            raise Exception('伺服器權限不足,無法建立上傳目錄')
+        
+        # 寫入檔案
+        try:
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            if os.name != 'nt':
+                os.chmod(save_path, 0o664)
+        except PermissionError:
+            raise Exception('伺服器權限不足,無法儲存檔案')
+        except Exception as e:
+            raise Exception(f'儲存檔案時發生錯誤: {str(e)}')
+        
+        # 更新進度: 70% - 生成報告
+        processing_jobs[job_id]['progress'] = 70
+        processing_jobs[job_id]['message'] = '正在生成報告...'
+        
+        # 如果有 fail 項目，生成 fail report
+        fail_report_path = None
+        if parse_result['failed_count'] > 0:
+            fail_report_path = save_path.replace('.log', '_fail_report.txt')
+            try:
+                _generate_fail_report(parse_result['failed_sessions'], fail_report_path)
+                if os.name != 'nt':
+                    os.chmod(fail_report_path, 0o664)
+            except Exception as e:
+                print(f"警告: 無法生成 fail report: {e}")
+        
+        # 更新進度: 85% - 統計資料
+        processing_jobs[job_id]['progress'] = 85
+        processing_jobs[job_id]['message'] = '正在統計資料...'
+        
+        # 記錄上傳時間
+        upload_time = processing_jobs[job_id]['start_time']
+        
+        # 判斷測試結果狀態
+        if parse_result['failed_count'] > 0:
+            status = 'fail'
+        elif parse_result['exception_count'] > 0:
+            status = 'unknown'
+        else:
+            status = 'pass'
+        
+        processed_files[file_id] = {
+            'path': save_path,
+            'original_name': filename,
+            'parse_result': parse_result,
+            'fail_report_path': fail_report_path
+        }
+        
+        # 準備 failed sessions 的摘要資訊
+        # 計算每個 group 的總 round 數
+        group_total_rounds = {}
+        for session in parse_result['all_sessions']:
+            group_name = session.group_name
+            round_num = session.round_number
+            if group_name not in group_total_rounds:
+                group_total_rounds[group_name] = round_num
+            else:
+                group_total_rounds[group_name] = max(group_total_rounds[group_name], round_num)
+        
+        failed_summaries = []
+        for session in parse_result['failed_sessions']:
+            total_rounds = group_total_rounds.get(session.group_name, session.round_number)
+            summary = {
+                'command': session.command_name,
+                'group': session.group_name,
+                'round': session.round_number,
+                'total_rounds': total_rounds,
+                'start_time': session.start_time,
+                'temperature': session.temperature,
+                'log_full': '\n'.join(session.log_content)
+            }
+            failed_summaries.append(summary)
+        
+        # 統計所有 command 執行時間
+        command_executions = _collect_command_executions(parse_result['all_sessions'])
+        
+        # CSV 下載檔名
+        csv_download_name = filename.replace('.log', '_time_stat.csv')
+        
+        # 更新進度: 100% - 完成
+        processing_jobs[job_id]['progress'] = 100
+        processing_jobs[job_id]['status'] = 'completed'
+        processing_jobs[job_id]['message'] = '處理完成!'
+        processing_jobs[job_id]['result'] = {
+            'filename': filename,
+            'test_info': {
+                'start_time': parse_result['test_start_time'],
+                'total_sessions': parse_result['total_sessions'],
+                'passed': parse_result['passed_count'],
+                'failed': parse_result['failed_count'],
+                'exception': parse_result['exception_count']
+            },
+            'failed_summaries': failed_summaries,
+            'command_executions': command_executions,
+            'has_fail_report': fail_report_path is not None,
+            'file_id': file_id,
+            'download_name': f"下載 {filename}",
+            'csv_download_name': csv_download_name,
+            'upload_time': upload_time,
+            'status': status
+        }
+        
+        print(f"✅ 檔案處理完成: {filename}")
+        
+    except Exception as e:
+        print(f"❌ 處理檔案時發生錯誤: {e}")
+        processing_jobs[job_id]['status'] = 'error'
+        processing_jobs[job_id]['error'] = str(e)
 
 
 def _collect_command_executions(all_sessions: list) -> dict:

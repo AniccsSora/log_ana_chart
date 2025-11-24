@@ -33,9 +33,9 @@
         .control-btn { background: #2196F3; color: white; padding: 10px 20px; border: none; cursor: pointer; margin: 0 5px; border-radius: 4px; transition: all 0.3s; }
         .control-btn:hover { background: #0b7dda; transform: translateY(-1px); box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
         .control-btn:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
-        .file-content { overflow: hidden; transition: max-height 0.3s ease; }
-        .file-content.collapsed { max-height: 0; }
-        .file-content.expanded { max-height: 5000px; }
+        .file-content { overflow: visible; transition: max-height 0.3s ease; }
+        .file-content.collapsed { max-height: 0; overflow: hidden; }
+        .file-content.expanded { max-height: none; }
         .file-header { cursor: pointer; user-select: none; }
         .file-header:hover { background: #f0f0f0; }
         .toggle-icon { display: inline-block; margin-right: 5px; transition: transform 0.3s; }
@@ -186,9 +186,104 @@
                 display: block;
             }
         }
+        /* 進度條容器樣式 - 改為右下角堆疊顯示 */
+        .progress-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            max-width: 450px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+        .upload-progress {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            margin-bottom: 15px;
+            min-width: 400px;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(500px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .progress-close {
+            cursor: pointer;
+            color: #999;
+            font-size: 1.2em;
+            font-weight: bold;
+            transition: color 0.3s;
+        }
+        .progress-close:hover {
+            color: #f44336;
+        }
+        .progress-bar-container {
+            width: 100%;
+            height: 25px;
+            background: #e0e0e0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.85em;
+        }
+        .progress-bar.completed {
+            background: linear-gradient(90deg, #4CAF50, #66BB6A);
+        }
+        .progress-bar.error {
+            background: linear-gradient(90deg, #f44336, #e57373);
+        }
+        .progress-message {
+            text-align: center;
+            color: #666;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        .progress-filename {
+            color: #1976D2;
+            font-weight: bold;
+            font-size: 0.95em;
+        }
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(500px);
+                opacity: 0;
+            }
+        }
     </style>
 </head>
 <body>
+    <!-- 進度條容器 - 右下角堆疊顯示 -->
+    <div id="progressContainer" class="progress-container"></div>
+    
     <!-- 圖表放大彈出視窗 -->
     <div id="chartModal" class="chart-modal">
         <div class="chart-modal-content">
@@ -248,12 +343,123 @@
             const formData = new FormData();
             formData.append('file', file);
             
+            // 為此次上傳創建進度條
+            const jobId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+            createProgressItem(jobId, file.name);
+            
             fetch('/upload', { method: 'POST', body: formData })
                 .then(r => r.json())
                 .then(data => {
-                    if (data.success) {
-                        const div = document.createElement('div');
-                        div.className = 'file-info status-' + data.status;
+                    if (data.success && data.job_id) {
+                        // 更新為真實 job_id 並開始輪詢
+                        updateProgressItemId(jobId, data.job_id);
+                        pollProgress(data.job_id, file.name);
+                    } else {
+                        removeProgressItem(jobId);
+                        alert('上傳失敗: ' + (data.error || '未知錯誤'));
+                    }
+                })
+                .catch(err => {
+                    removeProgressItem(jobId);
+                    alert('上傳失敗: ' + err);
+                });
+        }
+        
+        // 創建單個進度條項目
+        function createProgressItem(jobId, filename) {
+            const container = document.getElementById('progressContainer');
+            const progressItem = document.createElement('div');
+            progressItem.className = 'upload-progress';
+            progressItem.id = `progress-${jobId}`;
+            progressItem.innerHTML = `
+                <div class="progress-header">
+                    <span class="progress-filename">📤 ${filename}</span>
+                    <span class="progress-close" onclick="removeProgressItem('${jobId}')">&times;</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="bar-${jobId}">0%</div>
+                </div>
+                <div class="progress-message" id="msg-${jobId}">上傳中...</div>
+            `;
+            container.appendChild(progressItem);
+        }
+        
+        // 更新進度條 ID (從臨時 ID 更新為真實 job_id)
+        function updateProgressItemId(oldId, newId) {
+            const oldElement = document.getElementById(`progress-${oldId}`);
+            if (oldElement) {
+                oldElement.id = `progress-${newId}`;
+                document.getElementById(`bar-${oldId}`).id = `bar-${newId}`;
+                document.getElementById(`msg-${oldId}`).id = `msg-${newId}`;
+                // 更新關閉按鈕的 onclick
+                const closeBtn = oldElement.querySelector('.progress-close');
+                closeBtn.setAttribute('onclick', `removeProgressItem('${newId}')`);
+            }
+        }
+        
+        // 移除進度條項目
+        function removeProgressItem(jobId) {
+            const item = document.getElementById(`progress-${jobId}`);
+            if (item) {
+                item.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => item.remove(), 300);
+            }
+        }
+        
+        // 更新單個進度條的進度
+        function updateProgressItem(jobId, progress, message, status = 'processing') {
+            const bar = document.getElementById(`bar-${jobId}`);
+            const msg = document.getElementById(`msg-${jobId}`);
+            if (bar && msg) {
+                bar.style.width = progress + '%';
+                bar.textContent = progress + '%';
+                msg.textContent = message;
+                
+                if (status === 'completed') {
+                    bar.classList.add('completed');
+                } else if (status === 'error') {
+                    bar.classList.add('error');
+                }
+            }
+        }
+        
+        function pollProgress(jobId, filename) {
+            const checkProgress = () => {
+                fetch(`/progress/${jobId}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            if (data.status === 'completed') {
+                                // 處理完成
+                                updateProgressItem(jobId, 100, '✅ 處理完成!', 'completed');
+                                setTimeout(() => {
+                                    displayResult(data.result);
+                                    removeProgressItem(jobId);
+                                }, 2000); // 2秒後自動移除
+                            } else if (data.status === 'processing') {
+                                // 繼續處理中
+                                updateProgressItem(jobId, data.progress, data.message);
+                                setTimeout(checkProgress, 500); // 每 500ms 查詢一次
+                            }
+                        } else if (data.status === 'error') {
+                            // 處理失敗
+                            updateProgressItem(jobId, 0, '❌ 處理失敗: ' + data.error, 'error');
+                            setTimeout(() => removeProgressItem(jobId), 3000);
+                        }
+                    })
+                    .catch(err => {
+                        console.error('查詢進度失敗:', err);
+                        updateProgressItem(jobId, 0, '❌ 網路錯誤', 'error');
+                        setTimeout(() => removeProgressItem(jobId), 3000);
+                    });
+            };
+            checkProgress();
+        }
+        
+        function displayResult(data) {
+            // 原本的顯示邏輯
+            const div = document.createElement('div');
+            div.className = 'file-info status-' + data.status;
                         div.id = 'file-' + data.file_id;
                         div.dataset.csvName = data.csv_download_name; // 儲存 CSV 檔名
                         
@@ -437,7 +643,7 @@
                                 failedHtml += `
                                     <div class="fail-item">
                                         <strong>#${idx + 1} ${fail.command}</strong> ${tempBadge}<br>
-                                        <small>Group: ${fail.group} | Round: ${fail.round} | Time: ${fail.start_time}</small>
+                                        <small>Group: ${fail.group} | Round: ${fail.round}/${fail.total_rounds} | Time: ${fail.start_time}</small>
                                         <details style="margin-top: 5px;">
                                             <summary style="cursor: pointer; color: #1976D2;">
                                                 查看完整 Log
@@ -615,10 +821,6 @@
                         }
                         
                         updateSnapshotButton(); // 更新快照按鈕顯示狀態
-                    } else {
-                        alert('上傳失敗: ' + data.error);
-                    }
-                });
         }
 
         function toggleContent(fileId) {
@@ -1003,10 +1205,10 @@
             if (snapshotBtn) snapshotBtn.remove();
             if (h1) h1.textContent = 'ALE Log Analysis Report (Snapshot)';
             
-            // 移除所有按鈕（但保留折疊功能）
-            htmlContent.querySelectorAll('.download-btn, .clear-btn, .copy-btn').forEach(btn => btn.remove());
+            // 移除下載和清除按鈕（但保留複製按鈕和折疊功能）
+            htmlContent.querySelectorAll('.download-btn, .clear-btn').forEach(btn => btn.remove());
             
-            // 移除上傳相關的事件處理器，但保留 toggleContent
+            // 移除上傳相關的事件處理器，但保留 toggleContent 和 copyLog
             const scripts = htmlContent.querySelectorAll('script');
             scripts.forEach(script => {
                 // 保留標記為 keepScript 的 script (例如 Chart.js)
@@ -1136,6 +1338,104 @@
                             });
                         }
                         // ==================== 維護區 4 結束 ====================
+                        
+                        // 圖表放大功能
+                        let modalChartInstance = null;
+                        
+                        function zoomChart(canvasId) {
+                            const originalCanvas = document.getElementById(canvasId);
+                            if (!originalCanvas || !originalCanvas.chart) {
+                                console.error('找不到圖表:', canvasId);
+                                return;
+                            }
+                            
+                            const originalChart = originalCanvas.chart;
+                            const modal = document.getElementById('chartModal');
+                            const modalCanvas = document.getElementById('modalChart');
+                            const modalTitle = document.getElementById('modalChartTitle');
+                            
+                            // 設定標題 (從 summary 中取得 command 名稱)
+                            const detailsElement = originalCanvas.closest('details');
+                            if (detailsElement) {
+                                const summaryText = detailsElement.querySelector('summary code');
+                                if (summaryText) {
+                                    modalTitle.textContent = '📊 ' + summaryText.textContent;
+                                }
+                            }
+                            
+                            // 清除舊的圖表實例
+                            if (modalChartInstance) {
+                                modalChartInstance.destroy();
+                            }
+                            
+                            // 複製圖表配置
+                            const chartConfig = {
+                                type: originalChart.config.type,
+                                data: JSON.parse(JSON.stringify(originalChart.data)),
+                                options: JSON.parse(JSON.stringify(originalChart.options))
+                            };
+                            
+                            // 調整放大圖表的選項
+                            chartConfig.options.aspectRatio = 2.5;
+                            chartConfig.options.maintainAspectRatio = true;
+                            chartConfig.options.plugins.legend.labels.font.size = 14;
+                            chartConfig.options.scales.x.ticks.font.size = 12;
+                            chartConfig.options.scales.y.ticks.font.size = 12;
+                            chartConfig.options.scales.x.title.font.size = 14;
+                            chartConfig.options.scales.y.title.font.size = 14;
+                            
+                            // 創建放大的圖表
+                            const ctx = modalCanvas.getContext('2d');
+                            modalChartInstance = new Chart(ctx, chartConfig);
+                            
+                            // 顯示彈出視窗
+                            modal.style.display = 'block';
+                        }
+                        
+                        function closeChartModal() {
+                            const modal = document.getElementById('chartModal');
+                            modal.style.display = 'none';
+                            
+                            // 清除圖表實例以釋放記憶體
+                            if (modalChartInstance) {
+                                modalChartInstance.destroy();
+                                modalChartInstance = null;
+                            }
+                        }
+                        
+                        // 點擊彈出視窗外部時關閉
+                        window.onclick = function(event) {
+                            const modal = document.getElementById('chartModal');
+                            if (event.target === modal) {
+                                closeChartModal();
+                            }
+                        }
+                        
+                        // ESC 鍵關閉彈出視窗
+                        document.addEventListener('keydown', function(event) {
+                            if (event.key === 'Escape') {
+                                closeChartModal();
+                            }
+                        });
+                        
+                        // 複製 Log 內容功能
+                        function copyLog(button, logId) {
+                            const logElement = document.getElementById(logId);
+                            const text = logElement.textContent;
+                            
+                            navigator.clipboard.writeText(text).then(() => {
+                                const originalText = button.textContent;
+                                button.textContent = '✓ 已複製';
+                                button.classList.add('copied');
+                                
+                                setTimeout(() => {
+                                    button.textContent = originalText;
+                                    button.classList.remove('copied');
+                                }, 2000);
+                            }).catch(err => {
+                                alert('複製失敗: ' + err);
+                            });
+                        }
                         
                         // 初始化所有圖表
                         window.addEventListener('DOMContentLoaded', function() {
